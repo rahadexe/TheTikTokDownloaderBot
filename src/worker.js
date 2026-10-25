@@ -290,14 +290,17 @@ async function handleCallback(cb, token, env = {}) {
     // 1. Check if audio is already cached
     const cached = await db.getCachedVideo(videoId, env);
     if (cached && cached.audio_file_id) {
+      const cachedTitle = safeUnicodeSlice(cached.title || 'TikTok Audio', 50);
+      const safeCaption =
+        `<b>${escapeHtml(safeUnicodeSlice(cached.title || 'TikTok Audio', 70))}</b>\n\n` +
+        `${botTag} ♥️`;
+
       await tgCall(token, 'sendAudio', {
         chat_id: chatId,
         audio: cached.audio_file_id,
-        title: (cached.title || 'TikTok Audio').substring(0, 50),
+        title: cachedTitle,
         performer: botTag,
-        caption:
-          `<b>${escapeHtml(cached.title || 'TikTok Audio')}</b>\n\n` +
-          `${botTag} ♥️`,
+        caption: safeCaption,
         parse_mode: 'HTML'
       });
       return;
@@ -306,17 +309,30 @@ async function handleCallback(cb, token, env = {}) {
     // 2. Fetch fresh audio stream and cache file_id
     const meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`);
     if (meta && meta.audioUrl) {
-      const audioTitle = meta.title || 'TikTok Audio';
-      const sentAudio = await tgCall(token, 'sendAudio', {
+      const cleanTitle = safeUnicodeSlice(meta.musicTitle || meta.title || 'TikTok Audio', 50);
+      const safeCaption =
+        `<b>${escapeHtml(safeUnicodeSlice(meta.title || meta.musicTitle || 'TikTok Audio', 70))}</b>\n\n` +
+        `${botTag} ♥️`;
+
+      let sentAudio = await tgCall(token, 'sendAudio', {
         chat_id: chatId,
         audio: meta.audioUrl,
-        title: audioTitle.substring(0, 50),
+        title: cleanTitle,
         performer: botTag,
-        caption:
-          `<b>${escapeHtml(audioTitle)}</b>\n\n` +
-          `${botTag} ♥️`,
+        caption: safeCaption,
         parse_mode: 'HTML'
       });
+
+      // Fallback if HTML caption or title had encoding quirks
+      if (!sentAudio?.ok) {
+        sentAudio = await tgCall(token, 'sendAudio', {
+          chat_id: chatId,
+          audio: meta.audioUrl,
+          title: 'TikTok Audio',
+          performer: botTag,
+          caption: `${botTag} ♥️`
+        });
+      }
 
       const audioFileId = sentAudio?.result?.audio?.file_id;
       if (audioFileId) {
@@ -395,7 +411,8 @@ async function extractTikTokData(url) {
           title: d.title || 'TikTok Video',
           author: d.author?.nickname || d.author?.unique_id || 'TikTok User',
           videoUrl: d.hdplay || d.play,
-          audioUrl: d.music || d.play,
+          audioUrl: d.music || d.music_info?.play || d.play,
+          musicTitle: d.music_info?.title || d.title || 'TikTok Audio',
           thumbnail: d.cover,
           duration: d.duration || 0
         };
@@ -463,6 +480,11 @@ async function tgCall(token, method, payload) {
 /**
  * HTML Escaper
  */
+function safeUnicodeSlice(str, limit = 50) {
+  if (!str) return '';
+  return Array.from(String(str)).slice(0, limit).join('').trim();
+}
+
 function escapeHtml(str) {
   if (!str) return '';
   return String(str)
