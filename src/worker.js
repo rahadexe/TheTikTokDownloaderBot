@@ -88,7 +88,6 @@ async function handleUpdate(update, token) {
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
-      `<b>TikTok Downloader</b>\n` +
       `<blockquote>Send any TikTok link to download video without watermark or extract audio.\n\n` +
       `Updates: @RHToolsOfficial</blockquote>`;
 
@@ -143,7 +142,7 @@ async function handleUpdate(update, token) {
 
     const inlineKeyboard = [
       [
-        { text: 'Audio', callback_data: `audio_${data.id}` }
+        { text: '🎵 Download Audio', callback_data: `audio_${data.id}` }
       ]
     ];
 
