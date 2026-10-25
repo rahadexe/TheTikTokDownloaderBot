@@ -1,4 +1,5 @@
 import worker from './src/worker.js';
+import * as db from './src/db.js';
 
 console.log('=== 🧪 Testing Serverless TikTok Downloader Worker ===\n');
 
@@ -63,7 +64,12 @@ async function runTests() {
     console.log('3. Telegram sendVideo Delivery & CDN Hotlink:', hasWatermarkFreeUrl ? 'PASSED' : 'FAILED');
     console.log('4. Interactive Audio (MP3) Button Attached:', hasAudioButton ? 'PASSED' : 'FAILED');
 
-    if (data.status === 'online' && hasWatermarkFreeUrl && hasAudioButton) {
+    // 5. Database & Cache Verification
+    const stats = await db.getStats();
+    const dbOk = stats.users >= 1;
+    console.log('5. Backend SQLite User Tracking & Analytics:', dbOk ? 'PASSED' : 'FAILED');
+
+    if (data.status === 'online' && hasWatermarkFreeUrl && hasAudioButton && dbOk) {
       console.log('\n🎉 ALL CLOUDFLARE WORKER TIKTOK DOWNLOADER TESTS PASSED WITH 100% SUCCESS!\n');
     } else {
       throw new Error('Some unit tests failed.');

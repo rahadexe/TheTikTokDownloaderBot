@@ -8,4 +8,6 @@ wrangler.toml
 
 # System & Logs
 *.log
+*.sqlite
+*.db
 .DS_Store

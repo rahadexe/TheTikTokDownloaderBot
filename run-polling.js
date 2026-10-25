@@ -56,7 +56,7 @@ async function startPolling() {
         for (const update of data.result) {
           offset = update.update_id + 1;
           // Handle update asynchronously without blocking polling loop
-          handleUpdate(update, token).catch(err => {
+          handleUpdate(update, token, {}).catch(err => {
             console.error('Error handling update:', err);
           });
         }

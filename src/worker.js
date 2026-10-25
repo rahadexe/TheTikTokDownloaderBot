@@ -4,16 +4,22 @@
  * Zero RAM/Bandwidth load on Worker (Telegram streams directly from CDN)
  */
 
+import * as db from './db.js';
+
+const ADMIN_ID = 6775546602;
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     // Health check & status
     if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+      const stats = await db.getStats(env);
       return new Response(JSON.stringify({
         status: 'online',
         service: 'TikTok Downloader Telegram Bot',
         engine: 'Cloudflare Workers Edge',
+        stats,
         timestamp: new Date().toISOString()
       }, null, 2), {
         headers: { 'Content-Type': 'application/json' }
@@ -52,7 +58,7 @@ export default {
       try {
         const update = await request.json();
         // Handle in background or async
-        ctx.waitUntil(handleUpdate(update, botToken));
+        ctx.waitUntil(handleUpdate(update, botToken, env));
         return new Response('OK', { status: 200 });
       } catch (err) {
         console.error('Error handling update:', err);
@@ -67,15 +73,22 @@ export default {
 /**
  * Handle incoming Telegram Update
  */
-async function handleUpdate(update, token) {
+async function handleUpdate(update, token, env = {}) {
+  // Track user activity in database
+  if (update.message?.from) {
+    db.upsertUser(update.message.from, env).catch(() => {});
+  } else if (update.callback_query?.from) {
+    db.upsertUser(update.callback_query.from, env).catch(() => {});
+  }
+
   // 1. Callback Queries (Audio extraction)
   if (update.callback_query) {
-    return handleCallback(update.callback_query, token);
+    return handleCallback(update.callback_query, token, env);
   }
 
   // 2. Inline Queries
   if (update.inline_query) {
-    return handleInlineQuery(update.inline_query, token);
+    return handleInlineQuery(update.inline_query, token, env);
   }
 
   // 3. Regular Messages
@@ -84,6 +97,22 @@ async function handleUpdate(update, token) {
   const msg = update.message;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
+
+  // Admin stats command (/stats or /admin)
+  if (text === '/stats' || text === '/admin') {
+    if (chatId === ADMIN_ID || msg.from?.id === ADMIN_ID) {
+      const stats = await db.getStats(env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text:
+          `📊 <b>System Stats</b>\n\n` +
+          `Users: <b>${stats.users}</b>\n` +
+          `Downloads: <b>${stats.downloads}</b>\n` +
+          `Cached Videos: <b>${stats.cachedVideos}</b>`,
+        parse_mode: 'HTML'
+      });
+    }
+  }
 
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
@@ -109,6 +138,40 @@ async function handleUpdate(update, token) {
     return;
   }
 
+  // Check cache if direct video ID is in URL
+  const idMatch = tiktokUrl.match(/\/video\/([0-9]+)/);
+  const directId = idMatch ? idMatch[1] : null;
+
+  if (directId) {
+    const cached = await db.getCachedVideo(directId, env);
+    if (cached && cached.file_id) {
+      await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
+      const caption =
+        `<b>${escapeHtml(cached.title || 'TikTok Video')}</b>\n\n` +
+        `@TheTikTokDownloaderBot ♥️`;
+
+      const inlineKeyboard = [
+        [
+          { text: '🎵 Download Audio', callback_data: `audio_${cached.video_id}` }
+        ]
+      ];
+
+      const sent = await tgCall(token, 'sendVideo', {
+        chat_id: chatId,
+        video: cached.file_id,
+        caption: caption,
+        parse_mode: 'HTML',
+        supports_streaming: true,
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+
+      if (sent?.ok) {
+        db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+        return;
+      }
+    }
+  }
+
   // Show status action
   await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
 
@@ -127,11 +190,19 @@ async function handleUpdate(update, token) {
         await tgCall(token, 'editMessageText', {
           chat_id: chatId,
           message_id: statusMsgId,
-          text: '<b>Video unavailable</b>\n<blockquote>Make sure the video is public and accessible.</blockquote>',
-          parse_mode: 'HTML'
+          text: 'Video is unavailable or private.'
         });
       }
       return;
+    }
+
+    // Check cache by data.id (e.g. if short link resolved)
+    let videoToSend = data.videoUrl;
+    if (data.id) {
+      const cached = await db.getCachedVideo(data.id, env);
+      if (cached && cached.file_id) {
+        videoToSend = cached.file_id;
+      }
     }
 
     const caption =
@@ -144,10 +215,10 @@ async function handleUpdate(update, token) {
       ]
     ];
 
-    // Deliver video directly from CDN via Telegram API
+    // Deliver video directly from CDN or Telegram file_id
     const sent = await tgCall(token, 'sendVideo', {
       chat_id: chatId,
-      video: data.videoUrl,
+      video: videoToSend,
       caption: caption,
       parse_mode: 'HTML',
       supports_streaming: true,
@@ -155,8 +226,15 @@ async function handleUpdate(update, token) {
     });
 
     // Delete progress message upon success
-    if (sent?.ok && statusMsgId) {
-      await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
+    if (sent?.ok) {
+      if (statusMsgId) {
+        await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
+      }
+      db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+      const tgFileId = sent.result?.video?.file_id;
+      if (tgFileId && data.id) {
+        db.setCachedVideo(data.id, data.title, tgFileId, env).catch(() => {});
+      }
     } else if (!sent?.ok) {
       throw new Error(sent?.description || 'Telegram failed to deliver video stream');
     }
@@ -166,8 +244,7 @@ async function handleUpdate(update, token) {
       await tgCall(token, 'editMessageText', {
         chat_id: chatId,
         message_id: statusMsgId,
-        text: `❌ <b>Error:</b> ${escapeHtml(err.message || 'Failed to download video.')}`,
-        parse_mode: 'HTML'
+        text: 'Video is unavailable or private.'
       });
     }
   }
@@ -176,7 +253,7 @@ async function handleUpdate(update, token) {
 /**
  * Handle Audio extraction callback
  */
-async function handleCallback(cb, token) {
+async function handleCallback(cb, token, env = {}) {
   const data = cb.data;
   if (!data || !data.startsWith('audio_')) return;
 
@@ -190,10 +267,27 @@ async function handleCallback(cb, token) {
   await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_document' });
 
   try {
+    // 1. Check if audio is already cached
+    const cached = await db.getCachedVideo(videoId, env);
+    if (cached && cached.audio_file_id) {
+      await tgCall(token, 'sendAudio', {
+        chat_id: chatId,
+        audio: cached.audio_file_id,
+        title: (cached.title || 'TikTok Audio').substring(0, 50),
+        performer: '@TheTikTokDownloaderBot',
+        caption:
+          `<b>${escapeHtml(cached.title || 'TikTok Audio')}</b>\n\n` +
+          `@TheTikTokDownloaderBot ♥️`,
+        parse_mode: 'HTML'
+      });
+      return;
+    }
+
+    // 2. Fetch fresh audio stream and cache file_id
     const meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`);
     if (meta && meta.audioUrl) {
       const audioTitle = meta.title || 'TikTok Audio';
-      await tgCall(token, 'sendAudio', {
+      const sentAudio = await tgCall(token, 'sendAudio', {
         chat_id: chatId,
         audio: meta.audioUrl,
         title: audioTitle.substring(0, 50),
@@ -203,11 +297,15 @@ async function handleCallback(cb, token) {
           `@TheTikTokDownloaderBot ♥️`,
         parse_mode: 'HTML'
       });
+
+      const audioFileId = sentAudio?.result?.audio?.file_id;
+      if (audioFileId) {
+        db.setCachedAudio(videoId, audioFileId, env).catch(() => {});
+      }
     } else {
       await tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '<b>Audio unavailable</b>\n<blockquote>Could not extract audio from this video.</blockquote>',
-        parse_mode: 'HTML'
+        text: 'Audio is unavailable.'
       });
     }
   } catch (e) {
