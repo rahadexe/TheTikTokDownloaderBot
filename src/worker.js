@@ -280,7 +280,7 @@ async function handleCallback(cb, token, env = {}) {
   const videoId = data.replace('audio_', '');
   await tgCall(token, 'answerCallbackQuery', {
     callback_query_id: cb.id,
-    text: 'Extracting audio...'
+    text: 'Downloading audio...'
   });
 
   const chatId = cb.message.chat.id;
