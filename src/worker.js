@@ -462,7 +462,14 @@ function extractTikTokUrl(text) {
   if (!text || typeof text !== 'string') return null;
   const match = text.match(/https?:\/\/(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[^\s]+/i);
   if (!match) return null;
-  return match[0].replace(/[.,;:!?)]+$/, '');
+  let cleanUrl = match[0].replace(/[.,;:!?)]+$/, '');
+  try {
+    const u = new URL(cleanUrl);
+    if (u.pathname.includes('/video/') || u.pathname.includes('/photo/')) {
+      cleanUrl = `${u.origin}${u.pathname}`;
+    }
+  } catch {}
+  return cleanUrl;
 }
 
 /**
