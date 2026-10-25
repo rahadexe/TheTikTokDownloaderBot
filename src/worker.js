@@ -88,12 +88,9 @@ async function handleUpdate(update, token) {
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
-      `⚡ <b>TikTok Video Downloader (Serverless Edge)</b>\n\n` +
-      `Send or paste any TikTok video link to download without watermark in HD:\n` +
-      `• Supports <code>vt.tiktok.com</code>, <code>vm.tiktok.com</code> & full links.\n` +
-      `• Watermark-free HD MP4 video.\n` +
-      `• MP3 audio extraction.\n\n` +
-      `📥 Just send your link below!`;
+      `<b>TikTok Downloader</b>\n` +
+      `<blockquote>Send any TikTok link to download video without watermark or extract audio.\n\n` +
+      `Updates: @RHToolsOfficial</blockquote>`;
 
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
@@ -108,7 +105,7 @@ async function handleUpdate(update, token) {
     if (msg.chat.type === 'private' && !text.startsWith('/')) {
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '❌ Please send a valid TikTok video link (e.g. <code>https://vt.tiktok.com/...</code>).',
+        text: '<b>Link not found</b>\n<blockquote>Please send a valid TikTok video link.</blockquote>',
         parse_mode: 'HTML'
       });
     }
@@ -121,7 +118,7 @@ async function handleUpdate(update, token) {
   // Inform user
   const statusMsg = await tgCall(token, 'sendMessage', {
     chat_id: chatId,
-    text: '⚡ <i>Fetching watermark-free video...</i>',
+    text: '<i>Downloading video...</i>',
     parse_mode: 'HTML'
   });
   const statusMsgId = statusMsg?.result?.message_id;
@@ -133,23 +130,24 @@ async function handleUpdate(update, token) {
         await tgCall(token, 'editMessageText', {
           chat_id: chatId,
           message_id: statusMsgId,
-          text: '❌ Could not download this TikTok video. Please ensure the account and video are public.',
+          text: '<b>Video unavailable</b>\n<blockquote>Make sure the video is public and accessible.</blockquote>',
           parse_mode: 'HTML'
         });
       }
       return;
     }
 
+    const authorLine = data.author ? `@${data.author.replace(/^@/, '')}` : 'TikTok';
+    const durationLine = data.duration ? ` · ${data.duration}s` : '';
     const caption =
-      `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n\n` +
-      `👤 <b>Author:</b> ${escapeHtml(data.author || 'Creator')}\n` +
-      `⏱ <b>Duration:</b> ${data.duration}s\n` +
-      `⚡ <i>Downloaded without watermark</i>`;
+      `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n` +
+      `<blockquote>${escapeHtml(authorLine)}${durationLine}\n` +
+      `@TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`;
 
     const inlineKeyboard = [
       [
-        { text: '🎵 Audio (MP3)', callback_data: `audio_${data.id}` },
-        { text: '📤 Share', url: `https://t.me/share/url?url=${encodeURIComponent(tiktokUrl)}&text=${encodeURIComponent('Downloaded via TikTok Bot ⚡')}` }
+        { text: 'Audio', callback_data: `audio_${data.id}` },
+        { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(tiktokUrl)}&text=${encodeURIComponent('Downloaded via @TheTikTokDownloaderBot')}` }
       ]
     ];
 
@@ -192,7 +190,7 @@ async function handleCallback(cb, token) {
   const videoId = data.replace('audio_', '');
   await tgCall(token, 'answerCallbackQuery', {
     callback_query_id: cb.id,
-    text: 'Extracting MP3 audio...'
+    text: 'Extracting audio...'
   });
 
   const chatId = cb.message.chat.id;
@@ -201,18 +199,21 @@ async function handleCallback(cb, token) {
   try {
     const meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`);
     if (meta && meta.audioUrl) {
+      const audioTitle = meta.title || 'TikTok Audio';
       await tgCall(token, 'sendAudio', {
         chat_id: chatId,
         audio: meta.audioUrl,
-        title: (meta.title || 'TikTok Audio').substring(0, 40),
-        performer: meta.author || 'TikTok Music',
-        caption: `🎵 <b>${escapeHtml(meta.title || 'Audio')}</b>`,
+        title: audioTitle.substring(0, 50),
+        performer: '@TheTikTokDownloaderBot',
+        caption:
+          `<b>${escapeHtml(audioTitle)}</b>\n` +
+          `<blockquote>Audio · @TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`,
         parse_mode: 'HTML'
       });
     } else {
       await tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '❌ Could not extract audio from this video.',
+        text: '<b>Audio unavailable</b>\n<blockquote>Could not extract audio from this video.</blockquote>',
         parse_mode: 'HTML'
       });
     }
@@ -242,8 +243,10 @@ async function handleInlineQuery(iq, token) {
         video_url: data.videoUrl,
         mime_type: 'video/mp4',
         thumb_url: data.thumbnail || 'https://raw.githubusercontent.com/TelegramBots/logos/main/logo.png',
-        title: data.title || 'TikTok Video (No Watermark)',
-        caption: `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n⚡ @TikTokBot`,
+        title: data.title || 'TikTok Video',
+        caption:
+          `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n` +
+          `<blockquote>@TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`,
         parse_mode: 'HTML'
       }
     ];
