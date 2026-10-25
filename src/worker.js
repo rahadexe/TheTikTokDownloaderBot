@@ -139,7 +139,7 @@ async function handleUpdate(update, token) {
 
     const caption =
       `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n\n` +
-      `Downloaded via @TheTikTokDownloaderBot`;
+      `@TheTikTokDownloaderBot ♥️`;
 
     const inlineKeyboard = [
       [
@@ -203,7 +203,7 @@ async function handleCallback(cb, token) {
         performer: '@TheTikTokDownloaderBot',
         caption:
           `<b>${escapeHtml(audioTitle)}</b>\n\n` +
-          `Downloaded via @TheTikTokDownloaderBot`,
+          `@TheTikTokDownloaderBot ♥️`,
         parse_mode: 'HTML'
       });
     } else {
