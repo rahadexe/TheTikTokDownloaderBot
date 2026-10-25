@@ -198,8 +198,7 @@ async function handleUpdate(update, token, env = {}) {
   // Inform user
   const statusMsg = await tgCall(token, 'sendMessage', {
     chat_id: chatId,
-    text: '<i>Fetching video...</i>',
-    parse_mode: 'HTML'
+    text: 'Downloading...'
   });
   const statusMsgId = statusMsg?.result?.message_id;
 
