@@ -88,14 +88,12 @@ async function handleUpdate(update, token) {
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
-      `<b>TikTok Downloader</b>\n` +
-      `<blockquote>Send any TikTok link to download video without watermark or extract audio.\n\n` +
-      `Updates: @RHToolsOfficial</blockquote>`;
+      `Send any TikTok link to download video or audio.\n\n` +
+      `@RHToolsOfficial`;
 
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: welcome,
-      parse_mode: 'HTML'
+      text: welcome
     });
   }
 
@@ -105,8 +103,7 @@ async function handleUpdate(update, token) {
     if (msg.chat.type === 'private' && !text.startsWith('/')) {
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '<b>Link not found</b>\n<blockquote>Please send a valid TikTok video link.</blockquote>',
-        parse_mode: 'HTML'
+        text: 'Send a valid TikTok video link.'
       });
     }
     return;
@@ -118,8 +115,7 @@ async function handleUpdate(update, token) {
   // Inform user
   const statusMsg = await tgCall(token, 'sendMessage', {
     chat_id: chatId,
-    text: '<i>Downloading video...</i>',
-    parse_mode: 'HTML'
+    text: 'Downloading video...'
   });
   const statusMsgId = statusMsg?.result?.message_id;
 
@@ -130,24 +126,17 @@ async function handleUpdate(update, token) {
         await tgCall(token, 'editMessageText', {
           chat_id: chatId,
           message_id: statusMsgId,
-          text: '<b>Video unavailable</b>\n<blockquote>Make sure the video is public and accessible.</blockquote>',
-          parse_mode: 'HTML'
+          text: 'Video is unavailable or private.'
         });
       }
       return;
     }
 
-    const authorLine = data.author ? `@${data.author.replace(/^@/, '')}` : 'TikTok';
-    const durationLine = data.duration ? ` · ${data.duration}s` : '';
-    const caption =
-      `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n` +
-      `<blockquote>${escapeHtml(authorLine)}${durationLine}\n` +
-      `@TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`;
+    const caption = `Downloaded via @TheTikTokDownloaderBot\n@RHToolsOfficial`;
 
     const inlineKeyboard = [
       [
-        { text: 'Audio', callback_data: `audio_${data.id}` },
-        { text: 'Share', url: `https://t.me/share/url?url=${encodeURIComponent(tiktokUrl)}&text=${encodeURIComponent('Downloaded via @TheTikTokDownloaderBot')}` }
+        { text: 'Audio', callback_data: `audio_${data.id}` }
       ]
     ];
 
@@ -204,17 +193,13 @@ async function handleCallback(cb, token) {
         chat_id: chatId,
         audio: meta.audioUrl,
         title: audioTitle.substring(0, 50),
-        performer: '@TheTikTokDownloaderBot',
-        caption:
-          `<b>${escapeHtml(audioTitle)}</b>\n` +
-          `<blockquote>Audio · @TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`,
-        parse_mode: 'HTML'
+        performer: '@RHToolsOfficial',
+        caption: `Downloaded via @TheTikTokDownloaderBot\n@RHToolsOfficial`
       });
     } else {
       await tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '<b>Audio unavailable</b>\n<blockquote>Could not extract audio from this video.</blockquote>',
-        parse_mode: 'HTML'
+        text: 'Audio is unavailable.'
       });
     }
   } catch (e) {
