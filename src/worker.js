@@ -88,13 +88,12 @@ async function handleUpdate(update, token) {
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
-      `<blockquote>Updates: @RHToolsOfficial</blockquote>\n\n` +
+      `Updates: @RHToolsOfficial\n\n` +
       `Send any TikTok link to download video without watermark or extract audio.`;
 
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: welcome,
-      parse_mode: 'HTML'
+      text: welcome
     });
   }
 
