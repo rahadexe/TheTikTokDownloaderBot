@@ -89,8 +89,8 @@ async function handleUpdate(update, token) {
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
       `<b>TikTok Downloader</b>\n\n` +
-      `<blockquote>Send any TikTok link to download video without watermark or extract audio.\n\n` +
-      `Updates: @RHToolsOfficial</blockquote>`;
+      `Send any TikTok link to download video without watermark or extract audio.\n\n` +
+      `Updates: @RHToolsOfficial`;
 
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
