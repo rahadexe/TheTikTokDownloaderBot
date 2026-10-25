@@ -118,17 +118,17 @@ async function handleUpdate(update, token, env = {}) {
   const botTag = await getBotTag(token);
   const { channelTag, adminId } = getBotConfig(env);
 
-  // Admin stats command (/stats or /admin)
-  if (text === '/stats' || text === '/admin') {
+  // Admin command (/admin)
+  if (text === '/admin') {
     if (chatId === adminId || msg.from?.id === adminId) {
       const stats = await db.getStats(env);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text:
-          `📊 <b>System Stats</b>\n\n` +
+          `<b>Admin Console</b>\n\n` +
           `Users: <b>${stats.users}</b>\n` +
           `Downloads: <b>${stats.downloads}</b>\n` +
-          `Cached Videos: <b>${stats.cachedVideos}</b>`,
+          `Cache: <b>${stats.cachedVideos}</b>`,
         parse_mode: 'HTML'
       });
     }
