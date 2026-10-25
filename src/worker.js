@@ -6,7 +6,12 @@
 
 import * as db from './db.js';
 
-const ADMIN_ID = 6775546602;
+function getBotConfig(env = {}) {
+  const botTag = env.BOT_USERNAME ? (env.BOT_USERNAME.startsWith('@') ? env.BOT_USERNAME : '@' + env.BOT_USERNAME) : '@TheTikTokDownloaderBot';
+  const channelTag = env.CHANNEL_USERNAME ? (env.CHANNEL_USERNAME.startsWith('@') ? env.CHANNEL_USERNAME : '@RHToolsOfficial') : '@RHToolsOfficial';
+  const adminId = Number(env.ADMIN_ID || 6775546602);
+  return { botTag, channelTag, adminId };
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -97,10 +102,11 @@ async function handleUpdate(update, token, env = {}) {
   const msg = update.message;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
+  const { botTag, channelTag, adminId } = getBotConfig(env);
 
   // Admin stats command (/stats or /admin)
   if (text === '/stats' || text === '/admin') {
-    if (chatId === ADMIN_ID || msg.from?.id === ADMIN_ID) {
+    if (chatId === adminId || msg.from?.id === adminId) {
       const stats = await db.getStats(env);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
@@ -117,7 +123,7 @@ async function handleUpdate(update, token, env = {}) {
   // /start or /help command
   if (text === '/start' || text.startsWith('/start ') || text === '/help') {
     const welcome =
-      `Updates: @RHToolsOfficial\n\n` +
+      `Updates: ${channelTag}\n\n` +
       `Send any TikTok link to download video without watermark or extract audio.`;
 
     return tgCall(token, 'sendMessage', {
@@ -148,7 +154,7 @@ async function handleUpdate(update, token, env = {}) {
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
       const caption =
         `<b>${escapeHtml(cached.title || 'TikTok Video')}</b>\n\n` +
-        `@TheTikTokDownloaderBot ♥️`;
+        `${botTag} ♥️`;
 
       const inlineKeyboard = [
         [
@@ -207,7 +213,7 @@ async function handleUpdate(update, token, env = {}) {
 
     const caption =
       `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n\n` +
-      `@TheTikTokDownloaderBot ♥️`;
+      `${botTag} ♥️`;
 
     const inlineKeyboard = [
       [
@@ -254,6 +260,7 @@ async function handleUpdate(update, token, env = {}) {
  * Handle Audio extraction callback
  */
 async function handleCallback(cb, token, env = {}) {
+  const { botTag } = getBotConfig(env);
   const data = cb.data;
   if (!data || !data.startsWith('audio_')) return;
 
@@ -274,10 +281,10 @@ async function handleCallback(cb, token, env = {}) {
         chat_id: chatId,
         audio: cached.audio_file_id,
         title: (cached.title || 'TikTok Audio').substring(0, 50),
-        performer: '@TheTikTokDownloaderBot',
+        performer: botTag,
         caption:
           `<b>${escapeHtml(cached.title || 'TikTok Audio')}</b>\n\n` +
-          `@TheTikTokDownloaderBot ♥️`,
+          `${botTag} ♥️`,
         parse_mode: 'HTML'
       });
       return;
@@ -291,10 +298,10 @@ async function handleCallback(cb, token, env = {}) {
         chat_id: chatId,
         audio: meta.audioUrl,
         title: audioTitle.substring(0, 50),
-        performer: '@TheTikTokDownloaderBot',
+        performer: botTag,
         caption:
           `<b>${escapeHtml(audioTitle)}</b>\n\n` +
-          `@TheTikTokDownloaderBot ♥️`,
+          `${botTag} ♥️`,
         parse_mode: 'HTML'
       });
 

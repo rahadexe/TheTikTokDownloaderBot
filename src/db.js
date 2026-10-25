@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 let db = null;
 let isNodeSqlite = false;
 
-// Initialize SQLite for Node.js environments
+// Initialize SQLite for Node.js environments (long polling / local testing)
 try {
   const { DatabaseSync } = await import('node:sqlite');
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,7 +37,7 @@ try {
   isNodeSqlite = false;
 }
 
-// In-Memory fallback store for environments without native node:sqlite
+// In-Memory fallback store for environments without native node:sqlite or D1
 const memoryStore = {
   users: new Map(),
   cache: new Map()
@@ -54,6 +54,24 @@ export async function upsertUser(user, env) {
   const firstName = user.first_name || '';
   const now = new Date().toISOString();
 
+  // 1. Cloudflare D1 priority (when running on Cloudflare Workers)
+  if (env && env.DB) {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO users (id, username, first_name, downloads_count, created_at, last_active_at)
+        VALUES (?, ?, ?, 0, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          username = excluded.username,
+          first_name = excluded.first_name,
+          last_active_at = excluded.last_active_at;
+      `).bind(id, username, firstName, now, now).run();
+      return;
+    } catch (e) {
+      console.warn('upsertUser D1 error:', e.message);
+    }
+  }
+
+  // 2. Node.js SQLite priority (when running via run-polling.js)
   if (isNodeSqlite && db) {
     try {
       const stmt = db.prepare(`
@@ -65,28 +83,13 @@ export async function upsertUser(user, env) {
           last_active_at = excluded.last_active_at;
       `);
       stmt.run(id, username, firstName, now, now);
+      return;
     } catch (e) {
       console.warn('upsertUser sqlite error:', e.message);
     }
-    return;
   }
 
-  // Cloudflare D1 support if env.DB is bound
-  if (env && env.DB) {
-    try {
-      await env.DB.prepare(`
-        INSERT INTO users (id, username, first_name, downloads_count, created_at, last_active_at)
-        VALUES (?, ?, ?, 0, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          username = excluded.username,
-          first_name = excluded.first_name,
-          last_active_at = excluded.last_active_at;
-      `).bind(id, username, firstName, now, now).run();
-    } catch {}
-    return;
-  }
-
-  // Fallback in-memory
+  // 3. Fallback in-memory
   const existing = memoryStore.users.get(id) || { id, downloads_count: 0, created_at: now };
   existing.username = username;
   existing.first_name = firstName;
@@ -101,20 +104,23 @@ export async function incrementUserDownloads(userId, env) {
   if (!userId) return;
   const id = Number(userId);
 
-  if (isNodeSqlite && db) {
-    try {
-      db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
-    } catch {}
-    return;
-  }
-
+  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).bind(id).run();
+      return;
     } catch {}
-    return;
   }
 
+  // 2. Node.js SQLite
+  if (isNodeSqlite && db) {
+    try {
+      db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
+      return;
+    } catch {}
+  }
+
+  // 3. In-memory fallback
   const u = memoryStore.users.get(id);
   if (u) u.downloads_count = (u.downloads_count || 0) + 1;
 }
@@ -126,22 +132,23 @@ export async function getCachedVideo(videoId, env) {
   if (!videoId) return null;
   const vid = String(videoId);
 
-  if (isNodeSqlite && db) {
-    try {
-      const row = db.prepare(`SELECT * FROM video_cache WHERE video_id = ?`).get(vid);
-      return row || null;
-    } catch {}
-    return null;
-  }
-
+  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       const row = await env.DB.prepare(`SELECT * FROM video_cache WHERE video_id = ?`).bind(vid).first();
       return row || null;
     } catch {}
-    return null;
   }
 
+  // 2. Node.js SQLite
+  if (isNodeSqlite && db) {
+    try {
+      const row = db.prepare(`SELECT * FROM video_cache WHERE video_id = ?`).get(vid);
+      return row || null;
+    } catch {}
+  }
+
+  // 3. In-memory fallback
   return memoryStore.cache.get(vid) || null;
 }
 
@@ -155,21 +162,7 @@ export async function setCachedVideo(videoId, title, fileId, env) {
   const fid = String(fileId);
   const now = new Date().toISOString();
 
-  if (isNodeSqlite && db) {
-    try {
-      db.prepare(`
-        INSERT INTO video_cache (video_id, title, file_id, created_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(video_id) DO UPDATE SET
-          title = excluded.title,
-          file_id = excluded.file_id;
-      `).run(vid, t, fid, now);
-    } catch (e) {
-      console.warn('setCachedVideo sqlite error:', e.message);
-    }
-    return;
-  }
-
+  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`
@@ -179,10 +172,29 @@ export async function setCachedVideo(videoId, title, fileId, env) {
           title = excluded.title,
           file_id = excluded.file_id;
       `).bind(vid, t, fid, now).run();
-    } catch {}
-    return;
+      return;
+    } catch (e) {
+      console.warn('setCachedVideo D1 error:', e.message);
+    }
   }
 
+  // 2. Node.js SQLite
+  if (isNodeSqlite && db) {
+    try {
+      db.prepare(`
+        INSERT INTO video_cache (video_id, title, file_id, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(video_id) DO UPDATE SET
+          title = excluded.title,
+          file_id = excluded.file_id;
+      `).run(vid, t, fid, now);
+      return;
+    } catch (e) {
+      console.warn('setCachedVideo sqlite error:', e.message);
+    }
+  }
+
+  // 3. In-memory fallback
   const existing = memoryStore.cache.get(vid) || { video_id: vid };
   existing.title = t;
   existing.file_id = fid;
@@ -197,20 +209,23 @@ export async function setCachedAudio(videoId, audioFileId, env) {
   const vid = String(videoId);
   const afid = String(audioFileId);
 
-  if (isNodeSqlite && db) {
-    try {
-      db.prepare(`UPDATE video_cache SET audio_file_id = ? WHERE video_id = ?`).run(afid, vid);
-    } catch {}
-    return;
-  }
-
+  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`UPDATE video_cache SET audio_file_id = ? WHERE video_id = ?`).bind(afid, vid).run();
+      return;
     } catch {}
-    return;
   }
 
+  // 2. Node.js SQLite
+  if (isNodeSqlite && db) {
+    try {
+      db.prepare(`UPDATE video_cache SET audio_file_id = ? WHERE video_id = ?`).run(afid, vid);
+      return;
+    } catch {}
+  }
+
+  // 3. In-memory fallback
   const item = memoryStore.cache.get(vid);
   if (item) item.audio_file_id = afid;
 }
@@ -219,6 +234,20 @@ export async function setCachedAudio(videoId, audioFileId, env) {
  * Get aggregate statistics (Admin only)
  */
 export async function getStats(env) {
+  // 1. Cloudflare D1 priority
+  if (env && env.DB) {
+    try {
+      const uRow = await env.DB.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).first();
+      const cRow = await env.DB.prepare(`SELECT COUNT(*) as cached FROM video_cache`).first();
+      return {
+        users: Number(uRow?.users || 0),
+        downloads: Number(uRow?.downloads || 0),
+        cachedVideos: Number(cRow?.cached || 0)
+      };
+    } catch {}
+  }
+
+  // 2. Node.js SQLite
   if (isNodeSqlite && db) {
     try {
       const uRow = db.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).get();
@@ -233,18 +262,7 @@ export async function getStats(env) {
     }
   }
 
-  if (env && env.DB) {
-    try {
-      const uRow = await env.DB.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).first();
-      const cRow = await env.DB.prepare(`SELECT COUNT(*) as cached FROM video_cache`).first();
-      return {
-        users: Number(uRow?.users || 0),
-        downloads: Number(uRow?.downloads || 0),
-        cachedVideos: Number(cRow?.cached || 0)
-      };
-    } catch {}
-  }
-
+  // 3. In-memory fallback
   let totalDownloads = 0;
   for (const u of memoryStore.users.values()) {
     totalDownloads += (u.downloads_count || 0);

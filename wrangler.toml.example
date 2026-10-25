@@ -4,7 +4,21 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-# In production, set your token with:
+# Optional custom environment variables:
+ADMIN_ID = "6775546602"
+CHANNEL_USERNAME = "@RHToolsOfficial"
+BOT_USERNAME = "@TheTikTokDownloaderBot"
+
+# Set your BOT_TOKEN securely via Cloudflare Secrets:
 # npx wrangler secret put BOT_TOKEN
-# Or for local development in .dev.vars (BOT_TOKEN="...")
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+
+# Cloudflare D1 Serverless SQL Database Binding
+# 1. Create your database:
+#    npx wrangler d1 create tiktok_db
+# 2. Execute schema:
+#    npx wrangler d1 execute tiktok_db --file=./schema.sql
+# 3. Paste database_id below and uncomment:
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "tiktok_db"
+# database_id = "YOUR_D1_DATABASE_ID_HERE"
