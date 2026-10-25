@@ -1,0 +1,22 @@
+{
+  "name": "worker-tiktok-downloader",
+  "version": "1.0.0",
+  "description": "Serverless Telegram TikTok Downloader Bot for Cloudflare Workers",
+  "main": "src/worker.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "telegram-bot",
+    "tiktok-downloader"
+  ],
+  "author": "Rahad",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.152.0"
+  }
+}

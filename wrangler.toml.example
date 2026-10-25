@@ -1,0 +1,10 @@
+name = "tiktok-downloader-bot"
+main = "src/worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# In production, set your token with:
+# npx wrangler secret put BOT_TOKEN
+# Or for local development in .dev.vars (BOT_TOKEN="...")
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
