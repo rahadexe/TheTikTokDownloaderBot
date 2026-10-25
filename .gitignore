@@ -4,7 +4,6 @@ node_modules/
 # Cloudflare Workers & Secrets
 .wrangler/
 .dev.vars
-wrangler.toml
 
 # System & Logs
 *.log

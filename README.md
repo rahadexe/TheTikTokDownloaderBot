@@ -33,17 +33,12 @@ npm install
 ```
 
 ### 2. Configure Environment
-Copy the example configuration:
-```bash
-cp wrangler.toml.example wrangler.toml
-```
-
 Set your Telegram Bot Token securely in Cloudflare Secrets:
 ```bash
 npx wrangler secret put BOT_TOKEN
 ```
 
-*(Optional)* You can customize `ADMIN_ID`, `CHANNEL_USERNAME`, and `BOT_USERNAME` in your `wrangler.toml` under `[vars]`.
+*(Optional)* You can customize `ADMIN_ID` and `CHANNEL_USERNAME` in `wrangler.toml` under `[vars]`.
 
 ### 3. Setup Free Cloudflare D1 Database (Optional but Recommended)
 ```bash
