@@ -1,4 +1,4 @@
-name = "tiktok-downloader-bot"
+name = "tiktokdownloader"
 main = "src/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
