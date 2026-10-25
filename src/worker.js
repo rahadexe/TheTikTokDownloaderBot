@@ -353,3 +353,5 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 }
+
+export { handleUpdate, extractTikTokData, extractTikTokUrl, escapeHtml };
