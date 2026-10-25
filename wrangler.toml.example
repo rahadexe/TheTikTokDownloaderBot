@@ -7,7 +7,6 @@ compatibility_flags = ["nodejs_compat"]
 # Optional custom environment variables:
 ADMIN_ID = "6775546602"
 CHANNEL_USERNAME = "@RHToolsOfficial"
-BOT_USERNAME = "@TheTikTokDownloaderBot"
 
 # Set your BOT_TOKEN securely via Cloudflare Secrets:
 # npx wrangler secret put BOT_TOKEN

@@ -6,11 +6,24 @@
 
 import * as db from './db.js';
 
+let cachedBotUsername = null;
+
+async function getBotTag(token) {
+  if (cachedBotUsername) return cachedBotUsername;
+  try {
+    const res = await tgCall(token, 'getMe', {});
+    if (res?.ok && res.result?.username) {
+      cachedBotUsername = '@' + res.result.username.replace(/^@/, '');
+      return cachedBotUsername;
+    }
+  } catch {}
+  return '@TheTikTokDownloaderBot';
+}
+
 function getBotConfig(env = {}) {
-  const botTag = env.BOT_USERNAME ? (env.BOT_USERNAME.startsWith('@') ? env.BOT_USERNAME : '@' + env.BOT_USERNAME) : '@TheTikTokDownloaderBot';
-  const channelTag = env.CHANNEL_USERNAME ? (env.CHANNEL_USERNAME.startsWith('@') ? env.CHANNEL_USERNAME : '@RHToolsOfficial') : '@RHToolsOfficial';
+  const channelTag = env.CHANNEL_USERNAME ? (env.CHANNEL_USERNAME.startsWith('@') ? env.CHANNEL_USERNAME : '@' + env.CHANNEL_USERNAME) : '@RHToolsOfficial';
   const adminId = Number(env.ADMIN_ID || 6775546602);
-  return { botTag, channelTag, adminId };
+  return { channelTag, adminId };
 }
 
 export default {
@@ -102,7 +115,8 @@ async function handleUpdate(update, token, env = {}) {
   const msg = update.message;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
-  const { botTag, channelTag, adminId } = getBotConfig(env);
+  const botTag = await getBotTag(token);
+  const { channelTag, adminId } = getBotConfig(env);
 
   // Admin stats command (/stats or /admin)
   if (text === '/stats' || text === '/admin') {
@@ -260,7 +274,7 @@ async function handleUpdate(update, token, env = {}) {
  * Handle Audio extraction callback
  */
 async function handleCallback(cb, token, env = {}) {
-  const { botTag } = getBotConfig(env);
+  const botTag = await getBotTag(token);
   const data = cb.data;
   if (!data || !data.startsWith('audio_')) return;
 
@@ -334,6 +348,7 @@ async function handleInlineQuery(iq, token) {
       return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
     }
 
+    const botTag = await getBotTag(token);
     const results = [
       {
         type: 'video',
@@ -343,8 +358,8 @@ async function handleInlineQuery(iq, token) {
         thumb_url: data.thumbnail || 'https://raw.githubusercontent.com/TelegramBots/logos/main/logo.png',
         title: data.title || 'TikTok Video',
         caption:
-          `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n` +
-          `<blockquote>@TheTikTokDownloaderBot · @RHToolsOfficial</blockquote>`,
+          `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n\n` +
+          `${botTag} ♥️`,
         parse_mode: 'HTML'
       }
     ];

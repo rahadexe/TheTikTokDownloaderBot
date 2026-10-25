@@ -22,7 +22,10 @@ async function runTests() {
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (url, opts) => {
     if (url.includes('api.telegram.org')) {
-      const parsed = JSON.parse(opts.body);
+      if (url.includes('getMe')) {
+        return new Response(JSON.stringify({ ok: true, result: { username: 'TheTikTokDownloaderBot' } }));
+      }
+      const parsed = opts.body ? JSON.parse(opts.body) : {};
       capturedTelegramCalls.push({ url, payload: parsed });
       return new Response(JSON.stringify({ ok: true, result: { message_id: 1234 } }));
     }
