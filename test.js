@@ -10,6 +10,21 @@ async function runTests() {
   const data = await res.json();
   console.log('1. GET /health Endpoint:', data.status === 'online' ? 'PASSED' : 'FAILED');
 
+  // 1b. Test All TikTok Link Variants
+  const { extractTikTokUrl } = await import('./src/worker.js');
+  const linkTests = [
+    'https://www.tiktok.com/@user/video/12345',
+    'https://tiktok.com/@user/video/12345',
+    'https://vt.tiktok.com/ZSjR123/',
+    'https://vm.tiktok.com/ZM8abc/',
+    'https://m.tiktok.com/v/12345.html',
+    'https://www.tiktok.com/t/ZT8abc123/',
+    'https://v.tiktok.com/ZS123/',
+    'Check out: https://vt.tiktok.com/ZSjR123/?utm=1!'
+  ];
+  const allExtracted = linkTests.every(l => !!extractTikTokUrl(l));
+  console.log('1b. Comprehensive TikTok Link Format Support:', allExtracted ? 'PASSED (8/8)' : 'FAILED');
+
   // 2. TikTok Extraction Live Test
   console.log('2. Testing Dual-Engine TikTok Extractor Live...');
   const testUrl = 'https://www.tiktok.com/@scout2015/video/6718335390845095173';

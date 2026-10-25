@@ -198,7 +198,7 @@ async function handleUpdate(update, token, env = {}) {
   // Inform user
   const statusMsg = await tgCall(token, 'sendMessage', {
     chat_id: chatId,
-    text: '<i>Downloading video...</i>',
+    text: '<i>Fetching video...</i>',
     parse_mode: 'HTML'
   });
   const statusMsgId = statusMsg?.result?.message_id;
@@ -443,8 +443,10 @@ async function extractTikTokData(url) {
  * URL Extractor & Validator
  */
 function extractTikTokUrl(text) {
-  const match = text.match(/https?:\/\/(?:(?:www|vm|vt|m)\.)?tiktok\.com\/[^\s]+/i);
-  return match ? match[0] : null;
+  if (!text || typeof text !== 'string') return null;
+  const match = text.match(/https?:\/\/(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[^\s]+/i);
+  if (!match) return null;
+  return match[0].replace(/[.,;:!?)]+$/, '');
 }
 
 /**
