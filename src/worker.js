@@ -44,6 +44,18 @@ export default {
       });
     }
 
+    // Diagnostic debug test route
+    if (request.method === 'GET' && url.pathname === '/debug') {
+      const testLink = url.searchParams.get('url') || 'https://vt.tiktok.com/ZSgQuVgCe/';
+      const extracted = await extractTikTokData(testLink);
+      return new Response(JSON.stringify({
+        testLink,
+        extracted
+      }, null, 2), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
     // Set webhook helper route: GET /setWebhook
     if (request.method === 'GET' && url.pathname === '/setWebhook') {
       const botToken = env.BOT_TOKEN;
