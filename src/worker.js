@@ -44,29 +44,6 @@ export default {
       });
     }
 
-    // Diagnostic debug test route
-    if (request.method === 'GET' && url.pathname === '/debug') {
-      const testLink = url.searchParams.get('url') || 'https://vt.tiktok.com/ZSgQuVgCe/';
-      const extracted = await extractTikTokData(testLink);
-      let tgTest = null;
-      if (url.searchParams.get('send') === '1' && env.BOT_TOKEN && extracted?.videoUrl) {
-        tgTest = await tgCall(env.BOT_TOKEN, 'sendVideo', {
-          chat_id: 6775546602,
-          video: extracted.videoUrl,
-          caption: 'Debug test'
-        });
-      }
-      return new Response(JSON.stringify({
-        hasToken: !!env.BOT_TOKEN,
-        tokenLength: env.BOT_TOKEN ? env.BOT_TOKEN.length : 0,
-        testLink,
-        extracted,
-        tgTest
-      }, null, 2), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
     // Set webhook helper route: GET /setWebhook
     if (request.method === 'GET' && url.pathname === '/setWebhook') {
       const botToken = env.BOT_TOKEN;
