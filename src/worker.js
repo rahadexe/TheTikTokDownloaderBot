@@ -224,8 +224,9 @@ async function handleUpdate(update, token, env = {}) {
       }
     }
 
+    const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 300);
     const caption =
-      `<b>${escapeHtml(data.title || 'TikTok Video')}</b>\n\n` +
+      `<b>${escapeHtml(safeTitle)}</b>\n\n` +
       `${botTag} ♥️`;
 
     const inlineKeyboard = [
@@ -235,7 +236,7 @@ async function handleUpdate(update, token, env = {}) {
     ];
 
     // Deliver video directly from CDN or Telegram file_id
-    const sent = await tgCall(token, 'sendVideo', {
+    let sent = await tgCall(token, 'sendVideo', {
       chat_id: chatId,
       video: videoToSend,
       caption: caption,
@@ -243,6 +244,28 @@ async function handleUpdate(update, token, env = {}) {
       supports_streaming: true,
       reply_markup: { inline_keyboard: inlineKeyboard }
     });
+
+    // Fallback 1: If HTML parse error occurred
+    if (!sent?.ok && sent?.description && sent.description.includes('parse')) {
+      sent = await tgCall(token, 'sendVideo', {
+        chat_id: chatId,
+        video: videoToSend,
+        caption: `${safeTitle}\n\n${botTag} ♥️`,
+        supports_streaming: true,
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+    }
+
+    // Fallback 2: If primary CDN stream failed, try alternative stream
+    if (!sent?.ok && data.fallbackUrl && data.fallbackUrl !== videoToSend) {
+      sent = await tgCall(token, 'sendVideo', {
+        chat_id: chatId,
+        video: data.fallbackUrl,
+        caption: `${safeTitle}\n\n${botTag} ♥️`,
+        supports_streaming: true,
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+    }
 
     // Delete progress message upon success
     if (sent?.ok) {
@@ -410,7 +433,8 @@ async function extractTikTokData(url) {
           id: d.id,
           title: d.title || 'TikTok Video',
           author: d.author?.nickname || d.author?.unique_id || 'TikTok User',
-          videoUrl: d.hdplay || d.play,
+          videoUrl: d.play || d.hdplay,
+          fallbackUrl: d.hdplay || d.play,
           audioUrl: d.music || d.music_info?.play || d.play,
           musicTitle: d.music_info?.title || d.title || 'TikTok Audio',
           thumbnail: d.cover,
