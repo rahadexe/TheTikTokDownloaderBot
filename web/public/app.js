@@ -1,64 +1,61 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const downloadForm = document.getElementById('downloadForm');
-  const tiktokUrl = document.getElementById('tiktokUrl');
+  const extractForm = document.getElementById('extractForm');
+  const dockUrl = document.getElementById('dockUrl');
   const clearBtn = document.getElementById('clearBtn');
   const pasteBtn = document.getElementById('pasteBtn');
-  const submitBtn = document.getElementById('submitBtn');
-  const sampleLinkBtn = document.getElementById('sampleLinkBtn');
+  const extractBtn = document.getElementById('extractBtn');
+  const sampleBtn = document.getElementById('sampleBtn');
 
-  const resultContainer = document.getElementById('resultContainer');
-  const resultVideo = document.getElementById('resultVideo');
-  const authorAvatar = document.getElementById('authorAvatar');
-  const authorNickname = document.getElementById('authorNickname');
-  const authorHandle = document.getElementById('authorHandle');
-  const videoTitle = document.getElementById('videoTitle');
-  const musicTitle = document.getElementById('musicTitle');
-
-  const statViews = document.getElementById('statViews');
-  const statLikes = document.getElementById('statLikes');
-  const statComments = document.getElementById('statComments');
-  const statShares = document.getElementById('statShares');
-
-  const btnDownloadHd = document.getElementById('btnDownloadHd');
-  const btnDownloadAudio = document.getElementById('btnDownloadAudio');
-  const btnDownloadFast = document.getElementById('btnDownloadFast');
-  const btnDownloadCover = document.getElementById('btnDownloadCover');
-
-  const videoOverlay = document.getElementById('videoOverlay');
+  const inspectorCard = document.getElementById('inspectorCard');
+  const mediaVideo = document.getElementById('mediaVideo');
+  const playerOverlay = document.getElementById('playerOverlay');
   const playBtn = document.getElementById('playBtn');
   const playIcon = document.getElementById('playIcon');
   const pauseIcon = document.getElementById('pauseIcon');
 
+  const creatorAvatar = document.getElementById('creatorAvatar');
+  const creatorName = document.getElementById('creatorName');
+  const creatorHandle = document.getElementById('creatorHandle');
+  const mediaCaption = document.getElementById('mediaCaption');
+  const audioTitle = document.getElementById('audioTitle');
+  const mediaMetrics = document.getElementById('mediaMetrics');
+
+  const btnHdVideo = document.getElementById('btnHdVideo');
+  const btnAudioMp3 = document.getElementById('btnAudioMp3');
+  const btnCover = document.getElementById('btnCover');
+  const btnFastServer = document.getElementById('btnFastServer');
+
+  // Video play/pause
   function togglePlay() {
-    if (resultVideo.paused) {
-      resultVideo.play();
-      videoOverlay.classList.add('playing');
+    if (mediaVideo.paused) {
+      mediaVideo.play();
+      playerOverlay.classList.add('playing');
       playIcon.style.display = 'none';
       pauseIcon.style.display = 'block';
     } else {
-      resultVideo.pause();
-      videoOverlay.classList.remove('playing');
+      mediaVideo.pause();
+      playerOverlay.classList.remove('playing');
       playIcon.style.display = 'block';
       pauseIcon.style.display = 'none';
     }
   }
 
-  if (videoOverlay) {
-    videoOverlay.addEventListener('click', togglePlay);
+  if (playerOverlay) {
+    playerOverlay.addEventListener('click', togglePlay);
   }
-  if (resultVideo) {
-    resultVideo.addEventListener('play', () => {
-      videoOverlay.classList.add('playing');
+  if (mediaVideo) {
+    mediaVideo.addEventListener('play', () => {
+      playerOverlay.classList.add('playing');
       playIcon.style.display = 'none';
       pauseIcon.style.display = 'block';
     });
-    resultVideo.addEventListener('pause', () => {
-      videoOverlay.classList.remove('playing');
+    mediaVideo.addEventListener('pause', () => {
+      playerOverlay.classList.remove('playing');
       playIcon.style.display = 'block';
       pauseIcon.style.display = 'none';
     });
-    resultVideo.addEventListener('ended', () => {
-      videoOverlay.classList.remove('playing');
+    mediaVideo.addEventListener('ended', () => {
+      playerOverlay.classList.remove('playing');
       playIcon.style.display = 'block';
       pauseIcon.style.display = 'none';
     });
@@ -73,14 +70,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Toggle clear button
-  tiktokUrl.addEventListener('input', () => {
-    clearBtn.style.display = tiktokUrl.value ? 'inline-flex' : 'none';
+  dockUrl.addEventListener('input', () => {
+    clearBtn.style.display = dockUrl.value ? 'inline-flex' : 'none';
   });
 
   clearBtn.addEventListener('click', () => {
-    tiktokUrl.value = '';
+    dockUrl.value = '';
     clearBtn.style.display = 'none';
-    tiktokUrl.focus();
+    dockUrl.focus();
   });
 
   // Paste button
@@ -89,43 +86,43 @@ document.addEventListener('DOMContentLoaded', () => {
       if (navigator.clipboard && navigator.clipboard.readText) {
         const text = await navigator.clipboard.readText();
         if (text) {
-          tiktokUrl.value = text.trim();
+          dockUrl.value = text.trim();
           clearBtn.style.display = 'inline-flex';
           pasteBtn.innerHTML = `<span>✓ Pasted</span>`;
           setTimeout(() => {
             pasteBtn.innerHTML = `
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
               <span>Paste</span>
             `;
           }, 1500);
         }
       } else {
-        tiktokUrl.focus();
+        dockUrl.focus();
       }
     } catch (err) {
-      tiktokUrl.focus();
+      dockUrl.focus();
     }
   });
 
   // Try sample link
-  sampleLinkBtn.addEventListener('click', () => {
-    tiktokUrl.value = 'https://vt.tiktok.com/ZSgQuVgCe/';
+  sampleBtn.addEventListener('click', () => {
+    dockUrl.value = 'https://vt.tiktok.com/ZSgQuVgCe/';
     clearBtn.style.display = 'inline-flex';
-    downloadForm.dispatchEvent(new Event('submit'));
+    extractForm.dispatchEvent(new Event('submit'));
   });
 
   // Handle Form Submission
-  downloadForm.addEventListener('submit', async (e) => {
+  extractForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const url = tiktokUrl.value.trim();
+    const url = dockUrl.value.trim();
     if (!url) return;
 
     // Loading State
-    const btnText = submitBtn.querySelector('.btn-text');
-    const btnLoader = submitBtn.querySelector('.btn-loader');
+    const btnText = extractBtn.querySelector('.btn-text');
+    const btnSpinner = extractBtn.querySelector('.btn-spinner');
     btnText.style.display = 'none';
-    btnLoader.style.display = 'inline-flex';
-    submitBtn.disabled = true;
+    btnSpinner.style.display = 'inline-flex';
+    extractBtn.disabled = true;
 
     try {
       const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
@@ -136,69 +133,69 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Populate Data
-      authorAvatar.src = data.author.avatar || 'https://via.placeholder.com/100';
-      authorNickname.textContent = data.author.nickname || 'TikTok Creator';
-      authorHandle.textContent = data.author.unique_id ? `@${data.author.unique_id}` : '@tiktok_user';
-      videoTitle.textContent = data.title || 'TikTok Video';
-      musicTitle.textContent = data.music.title || 'Original Audio';
+      creatorAvatar.src = data.author.avatar || 'https://via.placeholder.com/100';
+      creatorName.textContent = data.author.nickname || 'Creator';
+      creatorHandle.textContent = data.author.unique_id ? `@${data.author.unique_id}` : '@tiktok_user';
+      mediaCaption.textContent = data.title || 'Untitled video';
+      audioTitle.textContent = data.music.title || 'Original Sound';
 
-      statViews.textContent = formatNum(data.stats.views);
-      statLikes.textContent = formatNum(data.stats.likes);
-      statComments.textContent = formatNum(data.stats.comments);
-      statShares.textContent = formatNum(data.stats.shares);
+      const viewsStr = formatNum(data.stats.views);
+      const likesStr = formatNum(data.stats.likes);
+      mediaMetrics.textContent = `${viewsStr} views · ${likesStr} likes`;
 
       // Setup Video Player
       const playableVideo = data.downloads.hd_video || data.downloads.fast_video;
-      resultVideo.src = playableVideo;
-      resultVideo.poster = data.cover || '';
-      resultVideo.load();
+      mediaVideo.src = playableVideo;
+      mediaVideo.poster = data.cover || '';
+      mediaVideo.load();
 
-      // Setup Download Links with streaming proxy attachment
+      // Setup Download Links
       const videoFilename = `tiktok_${data.id || Date.now()}_clean.mp4`;
       const audioFilename = `tiktok_${data.id || Date.now()}_audio.mp3`;
 
-      // 1. HD Video
-      if (data.downloads.hd_video) {
-        btnDownloadHd.href = `/api/download?url=${encodeURIComponent(data.downloads.hd_video)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnDownloadHd.style.display = 'flex';
+      // HD Video
+      if (data.downloads.hd_video || data.downloads.fast_video) {
+        const targetVid = data.downloads.hd_video || data.downloads.fast_video;
+        btnHdVideo.href = `/api/download?url=${encodeURIComponent(targetVid)}&filename=${encodeURIComponent(videoFilename)}`;
+        btnHdVideo.style.display = 'flex';
       } else {
-        btnDownloadHd.style.display = 'none';
+        btnHdVideo.style.display = 'none';
       }
 
-      // 2. Audio MP3
+      // Audio MP3
       if (data.downloads.audio) {
-        btnDownloadAudio.href = `/api/download?url=${encodeURIComponent(data.downloads.audio)}&filename=${encodeURIComponent(audioFilename)}`;
-        btnDownloadAudio.style.display = 'flex';
+        btnAudioMp3.href = `/api/download?url=${encodeURIComponent(data.downloads.audio)}&filename=${encodeURIComponent(audioFilename)}`;
+        btnAudioMp3.style.display = 'flex';
       } else {
-        btnDownloadAudio.style.display = 'none';
+        btnAudioMp3.style.display = 'none';
       }
 
-      // 3. Fast Server Video
-      if (data.downloads.fast_video) {
-        btnDownloadFast.href = `/api/download?url=${encodeURIComponent(data.downloads.fast_video)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnDownloadFast.style.display = 'flex';
-      } else {
-        btnDownloadFast.style.display = 'none';
-      }
-
-      // 4. Cover image
+      // Cover image
       if (data.cover) {
-        btnDownloadCover.href = data.cover;
-        btnDownloadCover.style.display = 'flex';
+        btnCover.href = data.cover;
+        btnCover.style.display = 'inline-flex';
       } else {
-        btnDownloadCover.style.display = 'none';
+        btnCover.style.display = 'none';
+      }
+
+      // Fast Server Mirror
+      if (data.downloads.fast_video) {
+        btnFastServer.href = `/api/download?url=${encodeURIComponent(data.downloads.fast_video)}&filename=${encodeURIComponent(videoFilename)}`;
+        btnFastServer.style.display = 'inline-flex';
+      } else {
+        btnFastServer.style.display = 'none';
       }
 
       // Reveal & Smooth Scroll
-      resultContainer.style.display = 'block';
-      resultContainer.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      inspectorCard.style.display = 'grid';
+      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     } catch (err) {
       alert(`⚠️ ${err.message || 'Error occurred while resolving video.'}`);
     } finally {
       btnText.style.display = 'inline';
-      btnLoader.style.display = 'none';
-      submitBtn.disabled = false;
+      btnSpinner.style.display = 'none';
+      extractBtn.disabled = false;
     }
   });
 });

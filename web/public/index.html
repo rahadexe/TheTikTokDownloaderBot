@@ -3,41 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>TikTok Video Downloader — Fast, Free &amp; No Watermark HD</title>
-  <meta name="description" content="Download TikTok videos without watermark in full HD 1080p and extract high-bitrate MP3 audio. Fast, serverless, and 100% free with zero ads.">
+  <title>RH TikTok Studio — High-Definition Media Extractor</title>
+  <meta name="description" content="Studio-grade TikTok media extractor. Download 1080p original MP4 video and 320kbps MP3 audio with no watermarks.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚡</text></svg>">
 </head>
 <body>
-  <!-- Ambient Glow Effects -->
-  <div class="ambient-glow glow-top"></div>
-  <div class="ambient-glow glow-bottom"></div>
 
-  <!-- Navigation -->
-  <header class="navbar">
-    <div class="container nav-container">
-      <a href="/" class="brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Top Studio Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"></path>
           </svg>
         </div>
-        <div class="brand-text">
-          <span class="brand-name">RH TikTok</span>
-          <span class="brand-badge">Edge v2</span>
-        </div>
-      </a>
+        <span class="brand-title">RH TikTok</span>
+        <span class="badge">Studio</span>
+      </div>
 
-      <div class="nav-links">
-        <div class="status-pill">
+      <div class="header-actions">
+        <div class="status-indicator">
           <span class="status-dot"></span>
-          <span>Edge API Online</span>
+          <span class="status-label">Operational</span>
         </div>
-        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" class="btn btn-secondary btn-sm nav-tg-btn">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" class="nav-btn">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
           </svg>
           <span>Telegram Bot</span>
@@ -46,308 +40,173 @@
     </div>
   </header>
 
-  <!-- Hero Section -->
-  <main class="hero-section">
-    <div class="container hero-container">
+  <!-- Workspace Canvas -->
+  <main class="workspace">
+    <div class="canvas-container">
       
-      <!-- Headline & Subtitle -->
-      <div class="hero-header">
-        <div class="tag-pill">
-          <span class="sparkle">✦</span>
-          <span>Next-Gen Media Extractor · 100% Free &amp; Ad-Free</span>
-        </div>
-        <h1 class="hero-title">Download TikToks <br><span class="gradient-text">Without Watermark.</span></h1>
-        <p class="hero-subtitle">High-fidelity 1080p HD MP4 video and 320kbps MP3 audio stream extraction directly from the edge. No ads, no redirect loops, and zero quality loss.</p>
+      <!-- Headline & Pitch -->
+      <div class="intro">
+        <h1 class="intro-headline">Extract TikTok media at full resolution</h1>
+        <p class="intro-sub">Original bitrates, no watermarks, direct edge delivery.</p>
       </div>
 
-      <!-- Downloader Form Card -->
-      <div class="downloader-card">
-        <form id="downloadForm" class="download-form">
-          <div class="input-wrapper">
-            <span class="input-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+      <!-- Command Bar Dock -->
+      <div class="command-dock">
+        <form id="extractForm" class="dock-form">
+          <div class="dock-input-wrap">
+            <span class="dock-icon">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
               </svg>
             </span>
             <input 
               type="url" 
-              id="tiktokUrl" 
-              class="url-input" 
+              id="dockUrl" 
+              class="dock-input" 
               placeholder="Paste any TikTok link (vt.tiktok.com or tiktok.com/@user/...)" 
-              required 
+              required
               autocomplete="off"
               spellcheck="false"
             >
-            <div class="input-actions">
-              <button type="button" id="clearBtn" class="action-btn clear-btn" title="Clear input" style="display: none;">
-                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <div class="dock-tools">
+              <button type="button" id="clearBtn" class="tool-btn" title="Clear" style="display: none;">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
               </button>
-              <button type="button" id="pasteBtn" class="action-btn paste-btn" title="Paste from clipboard">
-                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+              <button type="button" id="pasteBtn" class="tool-btn paste-pill">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
                 <span>Paste</span>
               </button>
             </div>
           </div>
 
-          <button type="submit" id="submitBtn" class="btn btn-primary submit-btn">
-            <span class="btn-text">Extract Media</span>
-            <span class="btn-loader" style="display: none;">
-              <svg class="spinner" viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="32" stroke-linecap="round"></circle></svg>
-              <span>Resolving...</span>
+          <button type="submit" id="extractBtn" class="dock-action-btn">
+            <span class="btn-text">Extract</span>
+            <span class="btn-spinner" style="display: none;">
+              <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" fill="none" stroke-width="2.5" class="rotator"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-linecap="round"></circle></svg>
+              <span>Resolving</span>
             </span>
           </button>
         </form>
 
-        <!-- Quick Sample / Status -->
-        <div class="card-footer-hints">
-          <span class="hint-text">Supported: All mobile &amp; desktop TikTok links.</span>
-          <button type="button" id="sampleLinkBtn" class="sample-btn">Try sample link</button>
+        <div class="dock-hint">
+          <span class="hint-meta">Supports mobile, desktop, and photo mode links</span>
+          <button type="button" id="sampleBtn" class="sample-chip">Try sample link</button>
         </div>
       </div>
 
-      <!-- Result Viewport (Dynamic Reveal) -->
-      <div id="resultContainer" class="result-wrapper" style="display: none;">
-        <div class="result-card">
+      <!-- Studio Inspector Card (Dynamic) -->
+      <div id="inspectorCard" class="inspector-card" style="display: none;">
+        
+        <!-- Media Viewport -->
+        <div class="media-column">
+          <div class="player-frame" id="playerFrame">
+            <video id="mediaVideo" playsinline preload="metadata" poster=""></video>
+            <div class="player-overlay" id="playerOverlay">
+              <button type="button" class="player-btn" id="playBtn" title="Play / Pause">
+                <svg id="playIcon" viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
+                <svg id="pauseIcon" viewBox="0 0 24 24" width="26" height="26" fill="currentColor" style="display: none;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+              </button>
+            </div>
+            <div class="quality-tag">1080p Clean</div>
+          </div>
+        </div>
+
+        <!-- Specifications & Download Column -->
+        <div class="specs-column">
           
-          <!-- Media Preview (Left / Top) -->
-          <div class="result-preview-box">
-            <div class="video-player-container" id="playerWrap">
-              <video id="resultVideo" playsinline preload="metadata" poster=""></video>
-              <div class="custom-video-overlay" id="videoOverlay">
-                <button type="button" class="play-trigger-btn" id="playBtn" title="Play / Pause">
-                  <svg id="playIcon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"></polygon></svg>
-                  <svg id="pauseIcon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor" style="display:none;"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                </button>
+          <!-- Creator Info -->
+          <div class="creator-header">
+            <img id="creatorAvatar" src="" alt="Avatar" class="creator-avatar">
+            <div class="creator-meta">
+              <div class="creator-title-row">
+                <span id="creatorName" class="creator-name">Creator</span>
+                <span class="verified-dot" title="Verified">
+                  <svg viewBox="0 0 24 24" width="15" height="15" fill="#38bdf8"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                </span>
               </div>
-            </div>
-            <div class="preview-badge">
-              <span class="hd-badge">1080p No-Watermark</span>
+              <span id="creatorHandle" class="creator-handle">@username</span>
             </div>
           </div>
 
-          <!-- Media Details & Actions (Right / Bottom) -->
-          <div class="result-content">
-            <div class="author-row">
-              <img id="authorAvatar" src="" alt="Author Avatar" class="author-avatar">
-              <div class="author-meta">
-                <div class="author-name-wrap">
-                  <h3 id="authorNickname" class="author-name">Author Name</h3>
-                  <span class="verified-icon" title="Verified Creator">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="#00f2fe"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                  </span>
-                </div>
-                <span id="authorHandle" class="author-handle">@username</span>
-              </div>
+          <!-- Video Caption -->
+          <p id="mediaCaption" class="media-caption"></p>
+
+          <!-- Audio Metadata -->
+          <div class="audio-pill">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            <span id="audioTitle" class="audio-title">Audio Track</span>
+          </div>
+
+          <!-- Technical Specs Table -->
+          <div class="specs-table">
+            <div class="spec-row">
+              <span class="spec-key">Resolution</span>
+              <span class="spec-val">1080 × 1920 Full HD</span>
             </div>
-
-            <p id="videoTitle" class="video-caption">Video caption goes here...</p>
-
-            <div class="sound-tag">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-              <span id="musicTitle" class="sound-title">Original Audio</span>
+            <div class="spec-row">
+              <span class="spec-key">Watermark</span>
+              <span class="spec-val text-green">Bypassed / None</span>
             </div>
-
-            <!-- Stats Bar -->
-            <div class="stats-grid">
-              <div class="stat-pill">
-                <span class="stat-icon">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                </span>
-                <span id="statViews" class="stat-val">0</span>
-              </div>
-              <div class="stat-pill">
-                <span class="stat-icon stat-heart">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
-                </span>
-                <span id="statLikes" class="stat-val">0</span>
-              </div>
-              <div class="stat-pill">
-                <span class="stat-icon">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                </span>
-                <span id="statComments" class="stat-val">0</span>
-              </div>
-              <div class="stat-pill">
-                <span class="stat-icon">
-                  <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"></circle><circle cx="6" cy="12" r="3"></circle><circle cx="18" cy="19" r="3"></circle><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line></svg>
-                </span>
-                <span id="statShares" class="stat-val">0</span>
-              </div>
+            <div class="spec-row">
+              <span class="spec-key">Audio Track</span>
+              <span class="spec-val">320kbps AAC / MP3</span>
             </div>
+            <div class="spec-row">
+              <span class="spec-key">Metrics</span>
+              <span id="mediaMetrics" class="spec-val">0 views · 0 likes</span>
+            </div>
+          </div>
 
-            <!-- Action Download Buttons -->
-            <div class="download-actions-grid">
-              <a id="btnDownloadHd" href="#" class="dl-btn dl-primary" download>
-                <div class="dl-btn-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                </div>
-                <div class="dl-btn-text">
-                  <strong>Download HD Video</strong>
-                  <span>Original Bitrate · No Watermark</span>
-                </div>
+          <!-- Download Action Controls -->
+          <div class="download-drawer">
+            <a id="btnHdVideo" href="#" class="btn-block btn-primary" download>
+              <div class="btn-icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+              </div>
+              <div class="btn-text-group">
+                <span class="btn-title">Download Video (HD 1080p)</span>
+                <span class="btn-sub">Original source stream · MP4</span>
+              </div>
+            </a>
+
+            <a id="btnAudioMp3" href="#" class="btn-block btn-secondary" download>
+              <div class="btn-icon">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              </div>
+              <div class="btn-text-group">
+                <span class="btn-title">Extract Audio Track (MP3)</span>
+                <span class="btn-sub">Isolated original soundtrack</span>
+              </div>
+            </a>
+
+            <div class="secondary-actions">
+              <a id="btnCover" href="#" target="_blank" class="sub-btn">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                <span>Save Poster</span>
               </a>
-
-              <a id="btnDownloadAudio" href="#" class="dl-btn dl-secondary" download>
-                <div class="dl-btn-icon">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-                </div>
-                <div class="dl-btn-text">
-                  <strong>Extract MP3 Audio</strong>
-                  <span>High Bitrate 320kbps</span>
-                </div>
-              </a>
-
-              <a id="btnDownloadFast" href="#" class="dl-btn dl-tertiary" download>
-                <div class="dl-btn-icon">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                </div>
-                <div class="dl-btn-text">
-                  <strong>Fast Server Mirror</strong>
-                  <span>Standard Quality</span>
-                </div>
-              </a>
-
-              <a id="btnDownloadCover" href="#" class="dl-btn dl-tertiary" target="_blank" download>
-                <div class="dl-btn-icon">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                </div>
-                <div class="dl-btn-text">
-                  <strong>Cover Thumbnail</strong>
-                  <span>Full Resolution JPG</span>
-                </div>
+              <a id="btnFastServer" href="#" class="sub-btn" download>
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                <span>Fast Mirror</span>
               </a>
             </div>
-
           </div>
 
         </div>
+
       </div>
-
-      <!-- Feature Grid (Inspired by Mobbin design systems) -->
-      <section class="features-section">
-        <h2 class="section-title">Engineered for Perfection</h2>
-        <p class="section-desc">Designed with modern aesthetics and powered by serverless edge workers.</p>
-
-        <div class="features-grid">
-          <div class="feature-card">
-            <div class="feature-icon-box cyan-glow">
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
-            </div>
-            <h3 class="feature-title">Pure Clean Frames</h3>
-            <p class="feature-text">Zero TikTok overlay logos or author tags. Downloads the untouched original video file directly from the content delivery network.</p>
-          </div>
-
-          <div class="feature-card">
-            <div class="feature-icon-box purple-glow">
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-            </div>
-            <h3 class="feature-title">Instant Edge Extraction</h3>
-            <p class="feature-text">Multi-engine fallback architecture resolves links in under 900ms. No waiting in queue, no slow server transcoding.</p>
-          </div>
-
-          <div class="feature-card">
-            <div class="feature-icon-box blue-glow">
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
-            </div>
-            <h3 class="feature-title">HQ Audio Extraction</h3>
-            <p class="feature-text">Love the background music? Extract clean MP3 audio tracks at up to 320kbps bitrate with proper metadata preserved.</p>
-          </div>
-
-          <div class="feature-card">
-            <div class="feature-icon-box green-glow">
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-            </div>
-            <h3 class="feature-title">Zero Ads &amp; Privacy First</h3>
-            <p class="feature-text">No intrusive pop-ups, scam survey overlays, or fake download buttons. Completely safe and privacy-respecting.</p>
-          </div>
-        </div>
-      </section>
-
-      <!-- Telegram Banner Promo -->
-      <section class="tg-banner-section">
-        <div class="tg-banner-card">
-          <div class="tg-banner-content">
-            <div class="tg-banner-badge">Official RH Tools Bot</div>
-            <h2 class="tg-banner-title">Prefer Downloading Inside Telegram?</h2>
-            <p class="tg-banner-text">Send any TikTok link directly to <strong>@TheTikTokDownloaderBot</strong> to receive files straight to your chat with zero compression.</p>
-            <div class="tg-banner-buttons">
-              <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" class="btn btn-primary tg-action-btn">
-                <span>Launch Telegram Bot</span>
-                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-              </a>
-              <a href="https://t.me/RHToolsOfficial" target="_blank" class="btn btn-secondary">
-                <span>Join @RHToolsOfficial</span>
-              </a>
-            </div>
-          </div>
-          <div class="tg-banner-visual">
-            <div class="tg-mockup">
-              <div class="tg-mockup-header">
-                <span class="tg-dot"></span>
-                <span>TikTok Video Downloader</span>
-              </div>
-              <div class="tg-mockup-bubble user-bubble">https://vt.tiktok.com/ZSgQu...</div>
-              <div class="tg-mockup-bubble bot-bubble">
-                <div class="bubble-vid-icon">🎥</div>
-                <div class="bubble-info">
-                  <strong>HD Video (No Watermark)</strong>
-                  <span>Ready to save · 14.2 MB</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- FAQ Section -->
-      <section class="faq-section">
-        <h2 class="section-title">Frequently Asked Questions</h2>
-        <div class="faq-accordion">
-          <details class="faq-item" open>
-            <summary class="faq-question">Do I need to pay or register an account?</summary>
-            <div class="faq-answer">
-              <p>No! Our service is 100% free and requires no signup, credit card, or personal information. You can download as many videos as you want without limits.</p>
-            </div>
-          </details>
-
-          <details class="faq-item">
-            <summary class="faq-question">Does it remove the bouncing TikTok watermark?</summary>
-            <div class="faq-answer">
-              <p>Yes. Our extraction engines bypass the rendering overlay to deliver the original source video uploaded by the creator, completely watermark-free.</p>
-            </div>
-          </details>
-
-          <details class="faq-item">
-            <summary class="faq-question">How do I download TikTok videos on iPhone (iOS) or Android?</summary>
-            <div class="faq-answer">
-              <p>Open the TikTok app, tap <strong>Share</strong>, then tap <strong>Copy Link</strong>. Paste the link into the input box above and tap <strong>Download HD Video</strong>. On iPhone, files save to Safari Downloads or the Files app.</p>
-            </div>
-          </details>
-
-          <details class="faq-item">
-            <summary class="faq-question">Can I extract just the audio / MP3?</summary>
-            <div class="faq-answer">
-              <p>Absolutely. Choose the <strong>Extract MP3 Audio</strong> button after resolving the link to download the audio track directly.</p>
-            </div>
-          </details>
-        </div>
-      </section>
 
     </div>
   </main>
 
-  <!-- Footer -->
+  <!-- Studio Footer -->
   <footer class="footer">
-    <div class="container footer-container">
-      <div class="footer-left">
-        <span class="footer-brand">RH TikTok Video Downloader</span>
-        <span class="footer-copy">Crafted with precision by RH Tools. Not affiliated with TikTok or ByteDance.</span>
-      </div>
-      <div class="footer-right">
-        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" class="footer-link">@TheTikTokDownloaderBot</a>
-        <span class="footer-divider">·</span>
-        <a href="https://t.me/RHToolsOfficial" target="_blank" class="footer-link">@RHToolsOfficial</a>
+    <div class="footer-inner">
+      <span class="footer-copy">RH TikTok Studio · Serverless Edge Architecture</span>
+      <div class="footer-links">
+        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank">@TheTikTokDownloaderBot</a>
+        <span>·</span>
+        <a href="https://t.me/RHToolsOfficial" target="_blank">@RHToolsOfficial</a>
       </div>
     </div>
   </footer>
