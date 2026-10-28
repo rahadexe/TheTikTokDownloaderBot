@@ -1,116 +1,310 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>RH TikTok — Clean HD Downloader</title>
-  <meta name="description" content="Clean, fast TikTok video & MP3 downloader without watermarks.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RH TikTok Studio — Watermark-Free Media Extractor</title>
+  <meta name="description" content="Watermark-free TikTok H.264 MP4 video, original MP3 audio, and photo carousel extractor powered by Cloudflare Edge.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <div class="app-shell">
-    
-    <!-- Top Nav -->
-    <header class="app-nav">
-      <div class="nav-brand">
-        <span class="brand-glyph">RH</span>
-        <span class="brand-text">TikTok</span>
+  <!-- Top Ruled Studio Bar (64px desktop, 54px mobile) -->
+  <header class="top-bar">
+    <div class="top-bar-inner">
+      <div class="brand-cluster">
+        <span class="brand-mark" aria-hidden="true">RH</span>
+        <span class="brand-name">TikTok Studio</span>
+        <span class="status-pill">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="edgeStatusText">Edge Online</span>
+        </span>
       </div>
-      <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" class="nav-tg">
-        Telegram Bot ↗
-      </a>
-    </header>
 
-    <!-- Main View -->
-    <main class="app-body">
-      
-      <!-- Input Box -->
-      <section class="input-card">
-        <form id="extractForm" class="url-form">
-          <div class="field-wrap">
-            <input 
-              type="text" 
-              id="dockUrl" 
-              class="field-input" 
-              placeholder="Paste TikTok link here..." 
-              required
-              autocomplete="off"
-              spellcheck="false"
-            >
-            <button type="button" id="pasteBtn" class="paste-tag">Paste</button>
+      <nav class="top-nav" aria-label="Workspace navigation">
+        <a href="https://t.me/RHToolsOfficial" target="_blank" rel="noopener" class="nav-link active">@RHToolsOfficial</a>
+        <span class="top-divider" aria-hidden="true"></span>
+        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-pill-outline">
+          <span>Telegram Bot</span>
+          <svg class="icon-inline" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4.5 11.5L11.5 4.5M11.5 4.5H5.5M11.5 4.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Studio Canvas -->
+  <main class="studio-canvas">
+
+    <!-- Title Row + Command Dock -->
+    <section class="command-section" aria-labelledby="pageTitle">
+      <div class="title-row">
+        <div class="title-copy">
+          <div class="title-headline-line">
+            <h1 id="pageTitle" class="page-title">TikTok Media Extractor</h1>
+            <span id="statusNotice" class="freshness-stamp">Ready · Triple-Engine Edge</span>
           </div>
-          <button type="submit" id="extractBtn" class="action-btn">
-            <span class="btn-text">Get Video</span>
-            <span class="btn-spinner" style="display: none;">Resolving...</span>
-          </button>
-        </form>
-
-        <div class="sample-bar">
-          <button type="button" id="sampleBtn" class="sample-action">Try sample link</button>
+          <p class="page-subtitle">Paste any TikTok video, short link, or photo slideshow to extract original H.264 MP4 streams and MP3 audio.</p>
         </div>
-      </section>
+      </div>
 
-      <!-- Clean Result Card -->
-      <section id="inspectorCard" class="media-sheet" style="display: none;">
-        
-        <!-- Media Summary: Left thumbnail, Right details -->
-        <div class="media-brief">
-          <div class="thumb-frame" id="playerTrigger">
-            <video id="mediaVideo" playsinline preload="metadata" poster=""></video>
-            <div class="play-overlay">
-              <span class="play-symbol">▶</span>
-            </div>
-            <span class="quality-badge">HD</span>
+      <!-- Grok-Inspired Precision Command Dock -->
+      <form id="extractForm" class="command-dock" novalidate>
+        <div class="dock-input-well">
+          <svg class="dock-link-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M6.8 9.2L9.2 6.8M5.5 11.5L4.4 12.6C3.3 13.7 1.5 13.7 0.4 12.6C-0.7 11.5 -0.7 9.7 0.4 8.6L2.5 6.5M10.5 4.5L11.6 3.4C12.7 2.3 14.5 2.3 15.6 3.4C16.7 4.5 16.7 6.3 15.6 7.4L13.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <input
+            type="text"
+            id="dockUrl"
+            class="dock-input"
+            placeholder="Paste TikTok video or photo link..."
+            aria-label="TikTok URL"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <div class="dock-inline-actions">
+            <button type="button" id="pasteBtn" class="btn-chip">Paste</button>
+            <button type="button" id="sampleBtn" class="btn-chip">Sample</button>
           </div>
+        </div>
+        <button type="submit" id="extractBtn" class="btn-primary-pill">
+          <span class="btn-text">Extract Media</span>
+          <span class="btn-spinner" style="display: none;">Resolving...</span>
+        </button>
+      </form>
 
-          <div class="meta-details">
-            <div class="creator-line">
-              <img id="creatorAvatar" src="" alt="Avatar" class="avatar-circle">
-              <div class="creator-names">
-                <span id="creatorName" class="name-label">Creator</span>
-                <span id="creatorHandle" class="handle-label">@username</span>
+      <!-- Inline Error Banner (hidden unless error occurs) -->
+      <div id="errorBanner" class="error-strip" role="alert" style="display: none;">
+        <span id="errorText" class="error-msg">Could not resolve TikTok link. Check that the video is public.</span>
+        <button type="button" id="retryBtn" class="error-retry">Retry sample</button>
+      </div>
+    </section>
+
+    <!-- Two-Column Studio Workspace Grid -->
+    <div class="workspace-grid">
+
+      <!-- Left Column: Active Media Inspector & Export Stage -->
+      <section id="inspectorCard" class="studio-card inspector-card" aria-labelledby="inspectorHeading">
+        <div class="card-header">
+          <h2 id="inspectorHeading" class="section-title">Active Media Inspector</h2>
+          <div class="header-badges">
+            <span id="mediaTypeBadge" class="pill-positive">No Watermark · MP4</span>
+            <span id="mediaIdBadge" class="id-mono num">#76926648</span>
+          </div>
+        </div>
+
+        <!-- Split Media Stage & Export Controls -->
+        <div class="inspector-body">
+
+          <!-- 9:16 Vertical Video Preview Frame (Edits-inspired) -->
+          <div class="stage-column">
+            <div class="video-stage" id="playerTrigger">
+              <video
+                id="mediaVideo"
+                playsinline
+                preload="metadata"
+                poster="sample-cover.jpg"
+                src="https://www.tikwm.com/video/media/play/7692664817294773512.mp4"
+              ></video>
+
+              <div class="stage-top-bar">
+                <span id="resBadge" class="stage-pill">HD · H.264</span>
+                <button type="button" id="muteBtn" class="stage-icon-btn" aria-label="Toggle mute">
+                  <svg id="iconUnmuted" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M2.5 6H5.5L9.5 2.5V13.5L5.5 10H2.5V6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                    <path d="M12 5.5C12.9 6.8 12.9 9.2 12 10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              </div>
+
+              <div class="play-overlay" id="playOverlay">
+                <span class="play-circle" aria-hidden="true">
+                  <svg viewBox="0 0 16 16" fill="none">
+                    <path d="M5 3.5L12.5 8L5 12.5V3.5Z" fill="currentColor"/>
+                  </svg>
+                </span>
+              </div>
+
+              <div class="stage-transport">
+                <span id="timecodeText" class="timecode num">0:00 / 0:59</span>
+                <div class="scrubber-track" aria-hidden="true">
+                  <div id="scrubberFill" class="scrubber-fill"></div>
+                </div>
               </div>
             </div>
-            <p id="mediaCaption" class="caption-text"></p>
-            <div class="audio-tag">
-              <span class="audio-icon">♪</span>
-              <span id="audioTitle" class="audio-label">Original Sound</span>
+          </div>
+
+          <!-- Right Details + Tactile Export Stack (ElevenLabs-inspired) -->
+          <div class="details-column">
+            <div class="info-group">
+              <div class="creator-row">
+                <img id="creatorAvatar" src="sample-avatar.jpg" alt="Creator profile avatar" class="creator-avatar">
+                <div class="creator-meta">
+                  <span id="creatorName" class="creator-name">S Md Rasel</span>
+                  <span id="creatorHandle" class="creator-handle">@smdrasel54</span>
+                </div>
+                <span id="durationTag" class="duration-chip num">59s · 3.9 MB</span>
+              </div>
+
+              <p id="mediaCaption" class="media-caption">Men peak level ego — original vertical H.264 stream extracted without platform watermark.</p>
+
+              <div class="audio-strip">
+                <svg class="audio-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 12.5V3.5L13 2V11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="4.2" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.4"/>
+                  <circle cx="11.2" cy="11" r="1.8" stroke="currentColor" stroke-width="1.4"/>
+                </svg>
+                <span id="audioTitle" class="audio-name">original sound - smdrasel54</span>
+              </div>
+            </div>
+
+            <!-- Photo Carousel Grid (shown when a photo slideshow link is resolved) -->
+            <div id="photoGridWrap" class="photo-grid-wrap" style="display: none;">
+              <div class="photo-grid-header">
+                <span class="photo-grid-title">Carousel Slides</span>
+                <span id="photoCountLabel" class="photo-grid-count num">0 slides</span>
+              </div>
+              <div id="photoGrid" class="photo-grid"></div>
+            </div>
+
+            <!-- Export Action Buttons -->
+            <div class="export-stack">
+              <a
+                id="btnHdVideo"
+                href="/api/download?url=https%3A%2F%2Fwww.tikwm.com%2Fvideo%2Fmedia%2Fplay%2F7692664817294773512.mp4&filename=tiktok_7692664817294773512_clean.mp4"
+                class="btn-export-primary"
+                download
+              >
+                <span class="export-copy">
+                  <span class="export-main">Download Video (No Watermark)</span>
+                  <span id="videoSubLabel" class="export-sub num">Original MP4 · H.264 Stream</span>
+                </span>
+                <svg class="export-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 2.5V10.5M8 10.5L4.5 7M8 10.5L11.5 7M3 13.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </a>
+
+              <a
+                id="btnAudioMp3"
+                href="https://www.tikwm.com/video/media/play/7692664817294773512.mp4"
+                class="btn-export-secondary"
+                download
+              >
+                <span class="export-copy">
+                  <span class="export-main">Extract Audio Track (MP3)</span>
+                  <span class="export-sub">Original Sound · Direct Audio</span>
+                </span>
+                <svg class="export-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 2.5V10.5M8 10.5L4.5 7M8 10.5L11.5 7M3 13.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </a>
+
+              <div class="utility-links">
+                <a
+                  id="btnFastServer"
+                  href="/api/download?url=https%3A%2F%2Fwww.tikwm.com%2Fvideo%2Fmedia%2Fplay%2F7692664817294773512.mp4&filename=tiktok_7692664817294773512_clean.mp4"
+                  class="util-btn"
+                  download
+                >Fast Mirror</a>
+                <a id="btnCover" href="sample-cover.jpg" target="_blank" rel="noopener" class="util-btn">Save Cover</a>
+                <a id="btnCopyLink" href="#copy" class="util-btn">Copy URL</a>
+              </div>
             </div>
           </div>
+
         </div>
 
-        <!-- Download Buttons -->
-        <div class="download-stack">
-          <a id="btnHdVideo" href="#" class="btn-dl btn-dl-primary" download>
-            <span class="dl-title">Download Video (No Watermark)</span>
-            <span class="dl-sub">Original 1080p MP4</span>
-          </a>
-
-          <a id="btnAudioMp3" href="#" class="btn-dl btn-dl-secondary" download>
-            <span class="dl-title">Extract Audio (MP3)</span>
-            <span class="dl-sub">High Quality Audio Track</span>
-          </a>
-
-          <div class="extra-actions">
-            <a id="btnCover" href="#" target="_blank" class="extra-link">Save Poster</a>
-            <span class="sep">·</span>
-            <a id="btnFastServer" href="#" class="extra-link" download>Fast Mirror</a>
+        <!-- Divided KPI Strip (Views, Likes, Comments, Shares) -->
+        <div class="kpi-strip" role="region" aria-label="Media engagement metrics">
+          <div class="kpi-cell">
+            <span class="kpi-label">Views</span>
+            <span id="statViews" class="kpi-value num">568,846</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Likes</span>
+            <span id="statLikes" class="kpi-value num">31,177</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Comments</span>
+            <span id="statComments" class="kpi-value num">246</span>
+          </div>
+          <div class="kpi-cell">
+            <span class="kpi-label">Shares</span>
+            <span id="statShares" class="kpi-value num">775</span>
           </div>
         </div>
-
       </section>
 
-    </main>
+      <!-- Right Column: Recent Extractions Queue & Edge Pipeline Specs -->
+      <aside class="side-column" aria-label="Recent extractions and edge status">
 
-    <footer class="app-foot">
-      <span>RH Tools · Fast &amp; Ad-Free</span>
-    </footer>
+        <!-- Card 1: Session Extraction Queue -->
+        <section class="studio-card queue-card" aria-labelledby="queueHeading">
+          <div class="card-header">
+            <h2 id="queueHeading" class="section-title">Recent Extractions</h2>
+            <button type="button" id="clearHistoryBtn" class="text-action">Reset</button>
+          </div>
 
-  </div>
+          <div id="recentList" class="recent-list" role="list">
+            <div class="recent-row" role="listitem" data-url="https://vt.tiktok.com/ZSgQuVgCe/">
+              <img src="sample-cover.jpg" alt="Clip thumbnail" class="recent-thumb">
+              <div class="recent-info">
+                <span class="recent-title">Men peak level ego</span>
+                <span class="recent-sub">@smdrasel54 · MP4 + MP3</span>
+              </div>
+              <div class="recent-right">
+                <span class="recent-dur num">0:59</span>
+                <button type="button" class="row-load-btn" data-url="https://vt.tiktok.com/ZSgQuVgCe/">Inspect</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Card 2: Edge Engine & Telegram Bot Telemetry -->
+        <section class="studio-card telemetry-card" aria-labelledby="telemetryHeading">
+          <div class="card-header">
+            <h2 id="telemetryHeading" class="section-title">Cloudflare Edge Pipeline</h2>
+            <span class="pill-positive">Active</span>
+          </div>
+
+          <div class="kv-well">
+            <div class="kv-row">
+              <span class="kv-key">Extraction Engines</span>
+              <span class="kv-val num">3 Active</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Telegram Hash Cache</span>
+              <span id="kvCacheCount" class="kv-val num">30-Day TTL</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Max Binary Stream</span>
+              <span class="kv-val num">49.0 MB</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">Supported Formats</span>
+              <span class="kv-val">Video, Audio, Photos</span>
+            </div>
+          </div>
+
+          <div class="bot-callout">
+            <div class="bot-callout-copy">
+              <span class="bot-callout-title">Instant Telegram Delivery</span>
+              <span class="bot-callout-sub">Forward any link to @TheTikTokDownloaderBot for cached 0.1s Telegram delivery.</span>
+            </div>
+            <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-bot-open">Open</a>
+          </div>
+        </section>
+
+      </aside>
+
+    </div>
+
+  </main>
 
   <script src="app.js"></script>
 </body>

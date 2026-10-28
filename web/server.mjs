@@ -74,6 +74,9 @@ async function extractTikTok(url) {
         }
         if (json && json.code === 0 && json.data) {
           const d = json.data;
+          const images = Array.isArray(d.images)
+            ? d.images.map((u) => (u.startsWith('http') ? u : `https://www.tikwm.com${u}`))
+            : [];
           return {
             success: true,
             id: d.id,
@@ -85,6 +88,8 @@ async function extractTikTok(url) {
             },
             cover: d.cover || '',
             duration: d.duration || 0,
+            sizeBytes: Number(d.size || d.hd_size || 0) || undefined,
+            images,
             stats: {
               views: d.play_count || 0,
               likes: d.digg_count || 0,

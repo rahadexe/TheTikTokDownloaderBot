@@ -5,6 +5,22 @@
  */
 
 import * as db from './db.js';
+import {
+  INDEX_HTML,
+  STYLE_CSS,
+  APP_JS,
+  SAMPLE_COVER_B64,
+  SAMPLE_AVATAR_B64
+} from './web-assets.js';
+
+function decodeBase64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
 
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
@@ -80,14 +96,14 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // Health check & status
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/health')) {
+    // 1. Health check & status JSON endpoint
+    if (request.method === 'GET' && url.pathname === '/health') {
       const stats = await db.getStats(env);
       return new Response(
         JSON.stringify(
           {
             status: 'online',
-            service: 'TikTok Downloader Telegram Bot',
+            service: 'TikTok Downloader Telegram Bot & Web Studio',
             engine: 'Cloudflare Workers Edge (Triple-Engine + Multipart Fallback)',
             stats,
             timestamp: new Date().toISOString()
@@ -95,8 +111,139 @@ export default {
           null,
           2
         ),
-        { headers: { 'Content-Type': 'application/json' } }
+        { headers: { 'Content-Type': 'application/json; charset=utf-8' } }
       );
+    }
+
+    // 2. Web Studio Static Assets (Live at root / on Cloudflare Workers Edge)
+    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+      return new Response(INDEX_HTML, {
+        headers: {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'public, max-age=300'
+        }
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/style.css') {
+      return new Response(STYLE_CSS, {
+        headers: {
+          'Content-Type': 'text/css; charset=utf-8',
+          'Cache-Control': 'public, max-age=300'
+        }
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/app.js') {
+      return new Response(APP_JS, {
+        headers: {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'public, max-age=300'
+        }
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/sample-cover.jpg') {
+      return new Response(decodeBase64ToBytes(SAMPLE_COVER_B64), {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'public, max-age=86400'
+        }
+      });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/sample-avatar.jpg') {
+      return new Response(decodeBase64ToBytes(SAMPLE_AVATAR_B64), {
+        headers: {
+          'Content-Type': 'image/jpeg',
+          'Cache-Control': 'public, max-age=86400'
+        }
+      });
+    }
+
+    // 3. Web Studio API: /api/extract
+    if (request.method === 'GET' && url.pathname === '/api/extract') {
+      const rawUrl = url.searchParams.get('url') || '';
+      const cleanUrl = extractTikTokUrl(rawUrl);
+      if (!cleanUrl) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Please paste a valid TikTok video or photo link.' }),
+          { status: 400, headers: { 'Content-Type': 'application/json; charset=utf-8' } }
+        );
+      }
+
+      const webData = await extractWebStudioData(cleanUrl);
+      if (!webData) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Could not resolve TikTok media. Ensure the link is public.' }),
+          { status: 422, headers: { 'Content-Type': 'application/json; charset=utf-8' } }
+        );
+      }
+
+      return new Response(JSON.stringify(webData), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json; charset=utf-8' }
+      });
+    }
+
+    // 4. Web Studio API: /api/download (Streaming proxy with Referer + HD fallback + Range support)
+    if (request.method === 'GET' && url.pathname === '/api/download') {
+      const mediaUrl = url.searchParams.get('url');
+      const fallbackUrl = url.searchParams.get('fallback');
+      const isInline = url.searchParams.get('inline') === '1';
+      const filename = url.searchParams.get('filename') || 'tiktok_media.mp4';
+      if (!mediaUrl) {
+        return new Response('Missing media URL parameter.', { status: 400 });
+      }
+
+      try {
+        const upstreamHeaders = {
+          'User-Agent': BROWSER_UA,
+          'Referer': 'https://www.tiktok.com/'
+        };
+        const rangeHeader = request.headers.get('Range');
+        if (rangeHeader) {
+          upstreamHeaders['Range'] = rangeHeader;
+        }
+
+        let mediaRes = await fetch(mediaUrl, { redirect: 'follow', headers: upstreamHeaders });
+        const len = Number(mediaRes.headers.get('content-length') || 0);
+
+        if ((!mediaRes.ok || (len > 0 && len < 4096)) && fallbackUrl && fallbackUrl !== mediaUrl) {
+          mediaRes = await fetch(fallbackUrl, { redirect: 'follow', headers: upstreamHeaders });
+        }
+
+        if (!mediaRes.ok) {
+          return new Response('Failed to fetch remote media stream.', { status: mediaRes.status });
+        }
+
+        const rawType = mediaRes.headers.get('content-type') || '';
+        const safeType = rawType.startsWith('text/plain')
+          ? filename.endsWith('.mp3')
+            ? 'audio/mpeg'
+            : 'video/mp4'
+          : rawType || 'application/octet-stream';
+
+        const outHeaders = new Headers();
+        outHeaders.set('Content-Type', safeType);
+        outHeaders.set('Accept-Ranges', 'bytes');
+        if (!isInline) {
+          outHeaders.set('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
+        }
+        if (mediaRes.headers.get('content-length')) {
+          outHeaders.set('Content-Length', mediaRes.headers.get('content-length'));
+        }
+        if (mediaRes.headers.get('content-range')) {
+          outHeaders.set('Content-Range', mediaRes.headers.get('content-range'));
+        }
+
+        return new Response(mediaRes.body, {
+          status: mediaRes.status,
+          headers: outHeaders
+        });
+      } catch (err) {
+        return new Response('Stream error: ' + err.message, { status: 500 });
+      }
     }
 
     // Set webhook helper route: GET /setWebhook
@@ -1058,6 +1205,45 @@ async function extractTikTokData(url) {
   return null;
 }
 
+/**
+ * Web Studio JSON Formatter (used by GET /api/extract on Cloudflare Workers Edge)
+ */
+async function extractWebStudioData(url) {
+  const d = await extractTikTokData(url);
+  if (!d) return null;
+
+  return {
+    success: true,
+    id: d.id,
+    title: d.title || 'TikTok Video',
+    author: {
+      nickname: d.author || 'TikTok User',
+      unique_id: d.authorHandle || '',
+      avatar: d.authorAvatar || ''
+    },
+    cover: d.thumbnail || '',
+    duration: d.duration || 0,
+    sizeBytes: d.sizeBytes || d.hdSizeBytes || undefined,
+    images: d.images || [],
+    stats: d.stats || {
+      views: 0,
+      likes: 0,
+      comments: 0,
+      shares: 0
+    },
+    music: {
+      title: d.musicTitle || 'Original Sound',
+      play: d.audioUrl || ''
+    },
+    downloads: {
+      hd_video: d.hdUrl || d.videoUrl || '',
+      fast_video: d.videoUrl || d.tikwmProxyUrl || '',
+      audio: d.audioUrl || '',
+      cover: d.thumbnail || ''
+    }
+  };
+}
+
 function normalizeTikwmUrl(u) {
   if (!u || typeof u !== 'string') return null;
   if (u.startsWith('http://') || u.startsWith('https://')) return u;
@@ -1098,6 +1284,14 @@ async function extractFromTikWM(url) {
           id: d.id ? String(d.id) : null,
           title: d.title || 'TikTok Video',
           author: d.author?.nickname || d.author?.unique_id || 'TikTok User',
+          authorHandle: d.author?.unique_id || '',
+          authorAvatar: normalizeTikwmUrl(d.author?.avatar) || '',
+          stats: {
+            views: Number(d.play_count || 0),
+            likes: Number(d.digg_count || 0),
+            comments: Number(d.comment_count || 0),
+            shares: Number(d.share_count || 0)
+          },
           isPhoto,
           images,
           videoUrl: isPhoto ? null : (playUrl || hdUrl),
@@ -1217,6 +1411,14 @@ async function extractFromTikTokDirect(url) {
       id: item.id ? String(item.id) : null,
       title: item.desc || 'TikTok Video',
       author: item.author?.nickname || item.author?.uniqueId || 'TikTok User',
+      authorHandle: item.author?.uniqueId || '',
+      authorAvatar: item.author?.avatarMedium || item.author?.avatarThumb || '',
+      stats: {
+        views: Number(item.stats?.playCount || 0),
+        likes: Number(item.stats?.diggCount || 0),
+        comments: Number(item.stats?.commentCount || 0),
+        shares: Number(item.stats?.shareCount || 0)
+      },
       isPhoto: false,
       images: [],
       videoUrl: primaryVideo,
@@ -1260,6 +1462,14 @@ async function extractFromTikMate(url) {
           id: String(d2.id),
           title: d2.desc || 'TikTok Video',
           author: d2.author_name || d2.author_id || 'TikTok User',
+          authorHandle: d2.author_id || '',
+          authorAvatar: d2.author_avatar || '',
+          stats: {
+            views: 0,
+            likes: Number(d2.like_count || 0),
+            comments: Number(d2.comment_count || 0),
+            shares: Number(d2.share_count || 0)
+          },
           isPhoto: false,
           images: [],
           videoUrl: sdUrl,
