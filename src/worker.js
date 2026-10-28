@@ -116,8 +116,8 @@ export default {
     }
 
     // 2. Web Studio Static Assets (Live at root / on Cloudflare Workers Edge)
-    if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
-      return new Response(INDEX_HTML, {
+    if ((request.method === 'GET' || request.method === 'HEAD') && (url.pathname === '/' || url.pathname === '/index.html')) {
+      return new Response(request.method === 'HEAD' ? null : INDEX_HTML, {
         headers: {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'public, max-age=300'
@@ -125,8 +125,8 @@ export default {
       });
     }
 
-    if (request.method === 'GET' && url.pathname === '/style.css') {
-      return new Response(STYLE_CSS, {
+    if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === '/style.css') {
+      return new Response(request.method === 'HEAD' ? null : STYLE_CSS, {
         headers: {
           'Content-Type': 'text/css; charset=utf-8',
           'Cache-Control': 'public, max-age=300'
@@ -134,8 +134,8 @@ export default {
       });
     }
 
-    if (request.method === 'GET' && url.pathname === '/app.js') {
-      return new Response(APP_JS, {
+    if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === '/app.js') {
+      return new Response(request.method === 'HEAD' ? null : APP_JS, {
         headers: {
           'Content-Type': 'application/javascript; charset=utf-8',
           'Cache-Control': 'public, max-age=300'
