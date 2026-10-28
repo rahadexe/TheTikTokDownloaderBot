@@ -13,6 +13,45 @@ const MIN_VIDEO_BYTES = 8192; // Reject 280-byte CDN 503/403 text stubs
 const MIN_AUDIO_BYTES = 4096;
 const MIN_IMAGE_BYTES = 1024;
 
+// In-flight singleflight locks (prevents duplicate Worker uploads when multiple users send the same viral video simultaneously)
+const inFlightVideoJobs = new Map();
+const inFlightAudioJobs = new Map();
+
+/**
+ * Lightweight 1-hop short-link redirect resolver (0.08s HEAD hop):
+ * Resolves ANY new vt.tiktok.com / vm.tiktok.com / /t/ link to its canonical TikTok video_id
+ * BEFORE calling external scrapers — so different share links for an already-cached video forward instantly!
+ */
+async function resolveShortLinkIdFast(tiktokUrl) {
+  try {
+    const u = new URL(tiktokUrl);
+    const host = u.hostname.toLowerCase();
+    const isShort =
+      host === 'vt.tiktok.com' ||
+      host === 'vm.tiktok.com' ||
+      host === 'v.tiktok.com' ||
+      u.pathname.startsWith('/t/');
+    if (!isShort) return null;
+
+    const res = await fetch(tiktokUrl, {
+      method: 'HEAD',
+      redirect: 'manual',
+      headers: { 'User-Agent': BROWSER_UA },
+      signal: AbortSignal.timeout(3500)
+    });
+    const loc = res.headers.get('location') || '';
+    const match = loc.match(/\/(?:video|photo|v)\/([0-9]+)/i) || loc.match(/[?&](?:item_id|share_item_id)=([0-9]+)/i);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+function isStaleTelegramFileIdError(resp) {
+  const desc = String(resp?.description || '');
+  return /wrong file identifier|file reference|temporarily unavailable|invalid file_id/i.test(desc);
+}
+
 let cachedBotUsername = null;
 
 async function getBotTag(token) {
@@ -172,7 +211,8 @@ async function handleUpdate(update, token, env = {}) {
           `<b>Admin Console</b>\n\n` +
           `Users: <b>${stats.users}</b>\n` +
           `Downloads: <b>${stats.downloads}</b>\n` +
-          `Cache: <b>${stats.cachedVideos}</b>`,
+          `Cache: <b>${stats.cachedVideos}</b>` +
+          (stats.cacheHits ? `\nCache Hits: <b>${stats.cacheHits}</b>` : ''),
         parse_mode: 'HTML'
       });
     }
@@ -207,12 +247,27 @@ async function handleUpdate(update, token, env = {}) {
     return;
   }
 
-  // Fast L1/Edge Cache check: direct video ID in URL OR previously resolved short link (vt.tiktok.com / vm.tiktok.com)
-  const directMatch = tiktokUrl.match(/\/(?:video|v|embed\/v2|share\/video)\/([0-9]+)/);
-  const directId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl);
+  // Fast L1/D1/Edge Cache check:
+  // 1) Direct video/photo ID in URL, OR 2) Cached short-link mapping, OR 3) 1-hop 0.08s HEAD redirect resolution!
+  const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/video)\/([0-9]+)/);
+  let directId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl, env);
+
+  if (!directId) {
+    const fastHopId = await resolveShortLinkIdFast(tiktokUrl);
+    if (fastHopId) {
+      directId = fastHopId;
+      await db.setCachedShortLink(tiktokUrl, fastHopId, env).catch(() => {});
+    }
+  }
+
+  // Wait if another user is currently uploading this exact video right now (Singleflight Deduplication!)
+  if (directId && inFlightVideoJobs.has(directId)) {
+    await inFlightVideoJobs.get(directId).catch(() => {});
+  }
 
   if (directId) {
     const cached = await db.getCachedVideo(directId, env);
+    // A) Cached Video Instant Forward via Telegram file_id hash
     if (cached && cached.file_id) {
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
       const safeTitle = safeUnicodeSlice(cached.title || 'TikTok Video', 300);
@@ -226,9 +281,45 @@ async function handleUpdate(update, token, env = {}) {
         cached
       );
       if (sent?.ok) {
-        await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+        await db.incrementUserDownloads(msg.from?.id, env, {
+          videoId: cached.video_id || directId,
+          sourceUrl: tiktokUrl,
+          mediaType: 'video',
+          fromCache: true
+        }).catch(() => {});
         return;
       }
+      // Self-heal: if Telegram invalidated cached file_id, purge it and proceed to fresh upload
+      if (isStaleTelegramFileIdError(sent)) {
+        await db.invalidateCachedMedia(directId, env, 'video').catch(() => {});
+      }
+    }
+
+    // B) Cached Photo Album Instant Forward via Telegram photo file_id hashes
+    if (cached && Array.isArray(cached.photo_file_ids) && cached.photo_file_ids.length > 0) {
+      await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_photo' });
+      const safeTitle = safeUnicodeSlice(cached.title || 'TikTok Photo', 300);
+      const cachedPhotoRes = await deliverPhotoPost(
+        token,
+        chatId,
+        {
+          id: cached.video_id || directId,
+          images: cached.photo_file_ids,
+          audioUrl: cached.audio_url || cached.audio_file_id
+        },
+        safeTitle,
+        botTag
+      );
+      if (cachedPhotoRes?.delivered) {
+        await db.incrementUserDownloads(msg.from?.id, env, {
+          videoId: cached.video_id || directId,
+          sourceUrl: tiktokUrl,
+          mediaType: 'photo',
+          fromCache: true
+        }).catch(() => {});
+        return;
+      }
+      await db.invalidateCachedMedia(directId, env, 'photo').catch(() => {});
     }
   }
 
@@ -239,6 +330,14 @@ async function handleUpdate(update, token, env = {}) {
     text: 'Downloading...'
   });
   const statusMsgId = statusMsg?.result?.message_id;
+
+  let releaseInFlight = null;
+  if (directId && !inFlightVideoJobs.has(directId)) {
+    const lockPromise = new Promise((resolve) => {
+      releaseInFlight = resolve;
+    });
+    inFlightVideoJobs.set(directId, lockPromise);
+  }
 
   try {
     const data = await extractTikTokData(tiktokUrl);
@@ -254,34 +353,40 @@ async function handleUpdate(update, token, env = {}) {
       return;
     }
 
-    if (data.id && !directMatch) {
-      await db.setCachedShortLink(tiktokUrl, data.id).catch(() => {});
+    if (data.id) {
+      await db.setCachedShortLink(tiktokUrl, data.id, env).catch(() => {});
+      await db.setCachedShortLink(`https://www.tiktok.com/@a/video/${data.id}`, data.id, env).catch(() => {});
     }
 
     const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 300);
 
-    // Handle TikTok Photo / Slideshow Carousels
+    // Handle TikTok Photo / Slideshow Carousels + Cache returned Telegram Photo file_id hashes!
     if (data.isPhoto && Array.isArray(data.images) && data.images.length > 0) {
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_photo' });
-      if (data.id && data.audioUrl) {
-        await db.setCachedVideo(data.id, data.title, '', env, {
-          audioUrl: data.audioUrl,
-          musicTitle: data.musicTitle
-        });
-      }
-
-      const photoSent = await deliverPhotoPost(token, chatId, data, safeTitle, botTag);
-      if (photoSent) {
+      const photoRes = await deliverPhotoPost(token, chatId, data, safeTitle, botTag);
+      if (photoRes?.delivered) {
         if (statusMsgId) {
           await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
         }
-        await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+        if (data.id) {
+          await db.setCachedVideo(data.id, data.title, '', env, {
+            photoFileIds: photoRes.photoFileIds,
+            audioUrl: data.audioUrl,
+            musicTitle: data.musicTitle
+          }).catch(() => {});
+        }
+        await db.incrementUserDownloads(msg.from?.id, env, {
+          videoId: data.id || directId,
+          sourceUrl: tiktokUrl,
+          mediaType: 'photo',
+          fromCache: false
+        }).catch(() => {});
         return;
       }
       throw new Error('Failed to deliver TikTok photo post');
     }
 
-    // Check resolved video ID cache (first time this short link maps to an already-cached video ID)
+    // Check resolved video ID cache (in case short-link HEAD hop didn't resolve ID earlier)
     if (data.id) {
       const cached = await db.getCachedVideo(data.id, env);
       if (cached && cached.file_id) {
@@ -298,32 +403,50 @@ async function handleUpdate(update, token, env = {}) {
           if (statusMsgId) {
             await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
           }
-          await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+          await db.incrementUserDownloads(msg.from?.id, env, {
+            videoId: data.id,
+            sourceUrl: tiktokUrl,
+            mediaType: 'video',
+            fromCache: true
+          }).catch(() => {});
           return;
+        }
+        if (isStaleTelegramFileIdError(cachedSent)) {
+          await db.invalidateCachedMedia(data.id, env, 'video').catch(() => {});
         }
       }
     }
 
-    // Deliver Video: Stage 1 (Fast CDN Hotlink) -> Stage 2 (Worker Binary Stream Upload) -> Stage 3 (Fresh Engine Re-Extract + Binary Upload)
+    // Deliver Video: Stage 1 (Fast CDN Hotlink <=19MB) -> Stage 2 (Worker Binary Upload to Telegram <=49MB + Document Fallback) -> Stage 3 (Fresh Engine Re-Extract)
     const delivery = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl);
 
     if (delivery?.sent?.ok) {
       if (statusMsgId) {
         await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
       }
-      await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
-      const tgFileId = delivery.sent.result?.video?.file_id;
-      const finalId = data.id || delivery.meta?.id;
+      const mediaObj = delivery.sent.result?.video || delivery.sent.result?.document;
+      const tgFileId = mediaObj?.file_id;
+      const tgUniqueId = mediaObj?.file_unique_id;
+      const finalId = data.id || delivery.meta?.id || directId;
+
       if (finalId) {
-        await db.setCachedShortLink(tiktokUrl, finalId).catch(() => {});
+        await db.setCachedShortLink(tiktokUrl, finalId, env).catch(() => {});
         await db.setCachedVideo(finalId, data.title, tgFileId || '', env, {
+          fileUniqueId: tgUniqueId,
           audioUrl: data.audioUrl || delivery.meta?.audioUrl,
           musicTitle: data.musicTitle || delivery.meta?.musicTitle,
           width: delivery.meta?.width || data.width,
           height: delivery.meta?.height || data.height,
           duration: delivery.meta?.duration || data.duration
-        });
+        }).catch(() => {});
       }
+
+      await db.incrementUserDownloads(msg.from?.id, env, {
+        videoId: finalId,
+        sourceUrl: tiktokUrl,
+        mediaType: 'video',
+        fromCache: false
+      }).catch(() => {});
     } else if (delivery?.tooLarge) {
       if (statusMsgId) {
         await tgCall(token, 'editMessageText', {
@@ -343,6 +466,11 @@ async function handleUpdate(update, token, env = {}) {
         message_id: statusMsgId,
         text: 'Video is unavailable or private.'
       });
+    }
+  } finally {
+    if (releaseInFlight) {
+      releaseInFlight();
+      inFlightVideoJobs.delete(directId);
     }
   }
 }
@@ -497,33 +625,40 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
     ? JSON.stringify({ inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${videoId}` }]] })
     : null;
 
-  const buildForm = (captionText, useHtml) => {
+  const buildForm = (fieldName, captionText, useHtml) => {
     const fd = new FormData();
     fd.append('chat_id', String(chatId));
-    fd.append('video', videoBlob, `tiktok_${videoId || Date.now()}.mp4`);
+    fd.append(fieldName, videoBlob, `tiktok_${videoId || Date.now()}.mp4`);
     fd.append('caption', captionText);
     if (useHtml) fd.append('parse_mode', 'HTML');
-    fd.append('supports_streaming', 'true');
-    if (meta.width) fd.append('width', String(meta.width));
-    if (meta.height) fd.append('height', String(meta.height));
-    if (meta.duration) fd.append('duration', String(Math.round(meta.duration)));
+    if (fieldName === 'video') {
+      fd.append('supports_streaming', 'true');
+      if (meta.width) fd.append('width', String(meta.width));
+      if (meta.height) fd.append('height', String(meta.height));
+      if (meta.duration) fd.append('duration', String(Math.round(meta.duration)));
+    }
     if (replyMarkup) fd.append('reply_markup', replyMarkup);
     return fd;
   };
 
-  let sent = await tgCallMultipart(token, 'sendVideo', buildForm(htmlCaption, true));
+  let sent = await tgCallMultipart(token, 'sendVideo', buildForm('video', htmlCaption, true));
   if (!sent?.ok && sent?.description && sent.description.includes('parse')) {
-    sent = await tgCallMultipart(token, 'sendVideo', buildForm(plainCaption, false));
+    sent = await tgCallMultipart(token, 'sendVideo', buildForm('video', plainCaption, false));
+  }
+
+  // Fallback to sendDocument if Telegram's video transcoder rejects unusual codec/container
+  if (!sent?.ok && !/too large|Entity Too Large|413/i.test(String(sent?.description || ''))) {
+    sent = await tgCallMultipart(token, 'sendDocument', buildForm('document', plainCaption, false));
   }
   return sent;
 }
 
 /**
- * Deliver TikTok Photo / Slideshow Carousel Posts (preserves [ 🎵 Download Audio ] button on albums too!)
+ * Deliver TikTok Photo / Slideshow Carousel Posts + extract Telegram photo file_id hashes for instant caching!
  */
 async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
   const images = data.images.filter(Boolean);
-  if (images.length === 0) return false;
+  if (images.length === 0) return { delivered: false, photoFileIds: [] };
 
   const htmlCaption = `<b>${escapeHtml(safeTitle)}</b>\n\n${botTag} ♥️`;
   const plainCaption = `${safeTitle}\n\n${botTag} ♥️`;
@@ -531,6 +666,7 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
   const inlineKeyboard = hasAudioAction
     ? [[{ text: '🎵 Download Audio', callback_data: `audio_${data.id}` }]]
     : undefined;
+  const collectedPhotoIds = [];
 
   // Single photo post
   if (images.length === 1) {
@@ -542,7 +678,7 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
       ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {})
     });
 
-    if (!sent?.ok) {
+    if (!sent?.ok && /^https?:\/\//i.test(images[0])) {
       const imgBlob = await fetchMediaBlob(images[0], 'image/jpeg', MIN_IMAGE_BYTES, data.cookies);
       if (imgBlob) {
         const fd = new FormData();
@@ -553,7 +689,10 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
         sent = await tgCallMultipart(token, 'sendPhoto', fd);
       }
     }
-    return !!sent?.ok;
+
+    const bestPhoto = Array.isArray(sent?.result?.photo) ? sent.result.photo[sent.result.photo.length - 1] : null;
+    if (bestPhoto?.file_id) collectedPhotoIds.push(bestPhoto.file_id);
+    return { delivered: !!sent?.ok, photoFileIds: collectedPhotoIds };
   }
 
   // Multi-photo carousel (Telegram allows up to 10 items per sendMediaGroup, and forbids inline_keyboard inside sendMediaGroup)
@@ -571,7 +710,7 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
       media: mediaPayload
     });
 
-    if (!groupSent?.ok) {
+    if (!groupSent?.ok && chunk.every((u) => /^https?:\/\//i.test(u))) {
       const blobs = await Promise.all(
         chunk.map((imgUrl) => fetchMediaBlob(imgUrl, 'image/jpeg', MIN_IMAGE_BYTES, data.cookies))
       );
@@ -596,7 +735,15 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
       }
     }
 
-    if (groupSent?.ok) anyDelivered = true;
+    if (groupSent?.ok) {
+      anyDelivered = true;
+      if (Array.isArray(groupSent.result)) {
+        for (const m of groupSent.result) {
+          const best = Array.isArray(m?.photo) ? m.photo[m.photo.length - 1] : null;
+          if (best?.file_id) collectedPhotoIds.push(best.file_id);
+        }
+      }
+    }
   }
 
   // Attach clean caption + [ 🎵 Download Audio ] button directly below the photo album
@@ -616,7 +763,7 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
     }
   }
 
-  return anyDelivered;
+  return { delivered: anyDelivered, photoFileIds: collectedPhotoIds };
 }
 
 /**
@@ -637,8 +784,14 @@ async function handleCallback(cb, token, env = {}) {
   if (!chatId) return;
   await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_document' });
 
+  if (inFlightAudioJobs.has(videoId)) {
+    await inFlightAudioJobs.get(videoId).catch(() => {});
+  }
+
+  let releaseAudioLock = null;
+
   try {
-    // 1. Instant delivery if audio_file_id is already cached
+    // 1. Instant delivery if audio_file_id hash is already cached
     const cached = await db.getCachedVideo(videoId, env);
     if (cached && cached.audio_file_id) {
       const cachedTitle = safeUnicodeSlice(cached.music_title || cached.title || 'TikTok Audio', 50);
@@ -655,6 +808,16 @@ async function handleCallback(cb, token, env = {}) {
         parse_mode: 'HTML'
       });
       if (cachedRes?.ok) return;
+      if (isStaleTelegramFileIdError(cachedRes)) {
+        await db.invalidateCachedMedia(videoId, env, 'audio').catch(() => {});
+      }
+    }
+
+    if (!inFlightAudioJobs.has(videoId)) {
+      const p = new Promise((resolve) => {
+        releaseAudioLock = resolve;
+      });
+      inFlightAudioJobs.set(videoId, p);
     }
 
     // 2. Gather candidate audio streams (use cached audio_url first to avoid TikWM 1-req/sec rate limit!)
@@ -748,9 +911,11 @@ async function handleCallback(cb, token, env = {}) {
     }
 
     if (sentAudio?.ok) {
-      const audioFileId = sentAudio.result?.audio?.file_id;
+      const audioObj = sentAudio.result?.audio || sentAudio.result?.document;
+      const audioFileId = audioObj?.file_id;
+      const audioUniqueId = audioObj?.file_unique_id;
       if (audioFileId) {
-        await db.setCachedAudio(videoId, audioFileId, env, cleanTitle);
+        await db.setCachedAudio(videoId, audioFileId, env, cleanTitle, audioUniqueId);
       }
     } else {
       await tgCall(token, 'sendMessage', {
@@ -764,6 +929,11 @@ async function handleCallback(cb, token, env = {}) {
       chat_id: chatId,
       text: 'Audio is unavailable.'
     });
+  } finally {
+    if (releaseAudioLock) {
+      releaseAudioLock();
+      inFlightAudioJobs.delete(videoId);
+    }
   }
 }
 
@@ -798,9 +968,15 @@ async function handleInlineQuery(iq, token, env = {}) {
   try {
     const botTag = await getBotTag(token);
 
-    // Check fast cache first
-    const directMatch = tiktokUrl.match(/\/(?:video|v|embed\/v2|share\/video)\/([0-9]+)/);
-    const cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl);
+    // Check fast cache first (including 1-hop short-link redirect resolution)
+    const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/video)\/([0-9]+)/);
+    let cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl, env);
+    if (!cachedVidId) {
+      cachedVidId = await resolveShortLinkIdFast(tiktokUrl);
+      if (cachedVidId) {
+        await db.setCachedShortLink(tiktokUrl, cachedVidId, env).catch(() => {});
+      }
+    }
     if (cachedVidId) {
       const cached = await db.getCachedVideo(cachedVidId, env);
       if (cached?.file_id) {
@@ -1266,30 +1442,41 @@ function extractTikTokUrl(text) {
 }
 
 /**
- * Telegram JSON API Helper
+ * Telegram JSON API Helper (with automatic 429 Flood-Wait retry_after backoff)
  */
 async function tgCall(token, method, payload) {
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    return await res.json().catch(() => ({ ok: false }));
-  } catch (err) {
-    return { ok: false, description: err.message };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20000)
+      });
+      const json = await res.json().catch(() => ({ ok: false }));
+      if (!json?.ok && json?.error_code === 429 && attempt === 0) {
+        const waitSec = Math.min(Number(json?.parameters?.retry_after || 2), 8);
+        await sleep(waitSec * 1000 + 150);
+        continue;
+      }
+      return json;
+    } catch (err) {
+      if (attempt === 1) return { ok: false, description: err.message };
+      await sleep(400);
+    }
   }
+  return { ok: false };
 }
 
 /**
- * Telegram Multipart FormData Upload Helper (for binary Blob uploads up to 50 MB)
+ * Telegram Multipart FormData Upload Helper (for binary Blob uploads up to 50 MB + 429 retry)
  */
 async function tgCallMultipart(token, method, formData) {
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: 'POST',
       body: formData,
-      signal: AbortSignal.timeout(25000)
+      signal: AbortSignal.timeout(35000)
     });
     return await res.json().catch(() => ({ ok: false }));
   } catch (err) {

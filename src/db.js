@@ -3,6 +3,62 @@ import { fileURLToPath } from 'url';
 
 let db = null;
 let isNodeSqlite = false;
+let d1Initialized = false;
+
+const CORE_SCHEMA_SQL = `
+  CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    downloads_count INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_active_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS video_cache (
+    video_id TEXT PRIMARY KEY,
+    title TEXT,
+    file_id TEXT NOT NULL DEFAULT '',
+    file_unique_id TEXT,
+    audio_file_id TEXT,
+    audio_unique_id TEXT,
+    photo_file_ids TEXT,
+    audio_url TEXT,
+    music_title TEXT,
+    width INTEGER,
+    height INTEGER,
+    duration INTEGER,
+    hits INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS link_cache (
+    url_key TEXT PRIMARY KEY,
+    video_id TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS user_downloads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    video_id TEXT NOT NULL,
+    source_url TEXT,
+    media_type TEXT DEFAULT 'video',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+`;
+
+const MIGRATION_COLUMNS = [
+  `ALTER TABLE video_cache ADD COLUMN file_unique_id TEXT;`,
+  `ALTER TABLE video_cache ADD COLUMN audio_unique_id TEXT;`,
+  `ALTER TABLE video_cache ADD COLUMN photo_file_ids TEXT;`,
+  `ALTER TABLE video_cache ADD COLUMN audio_url TEXT;`,
+  `ALTER TABLE video_cache ADD COLUMN music_title TEXT;`,
+  `ALTER TABLE video_cache ADD COLUMN width INTEGER;`,
+  `ALTER TABLE video_cache ADD COLUMN height INTEGER;`,
+  `ALTER TABLE video_cache ADD COLUMN duration INTEGER;`,
+  `ALTER TABLE video_cache ADD COLUMN hits INTEGER DEFAULT 1;`
+];
 
 // Initialize SQLite for Node.js environments (long polling / local testing)
 try {
@@ -12,44 +68,44 @@ try {
   db = new DatabaseSync(dbPath);
   isNodeSqlite = true;
 
-  // Initialize schema
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY,
-      username TEXT,
-      first_name TEXT,
-      downloads_count INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      last_active_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE TABLE IF NOT EXISTS video_cache (
-      video_id TEXT PRIMARY KEY,
-      title TEXT,
-      file_id TEXT NOT NULL,
-      audio_file_id TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
-  // Non-breaking optional columns for extended metadata caching
-  try { db.exec(`ALTER TABLE video_cache ADD COLUMN audio_url TEXT;`); } catch {}
-  try { db.exec(`ALTER TABLE video_cache ADD COLUMN music_title TEXT;`); } catch {}
-  try { db.exec(`ALTER TABLE video_cache ADD COLUMN width INTEGER;`); } catch {}
-  try { db.exec(`ALTER TABLE video_cache ADD COLUMN height INTEGER;`); } catch {}
-  try { db.exec(`ALTER TABLE video_cache ADD COLUMN duration INTEGER;`); } catch {}
+  db.exec(CORE_SCHEMA_SQL);
+  for (const sql of MIGRATION_COLUMNS) {
+    try { db.exec(sql); } catch {}
+  }
 } catch {
-  // Graceful fallback for non-node environments (Cloudflare Workers / In-Memory)
   isNodeSqlite = false;
 }
 
+/**
+ * Auto-migrate Cloudflare D1 tables when env.DB binding is attached
+ */
+async function ensureD1Schema(env) {
+  if (!env?.DB || d1Initialized) return;
+  d1Initialized = true;
+  try {
+    const statements = CORE_SCHEMA_SQL
+      .split(';')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const stmt of statements) {
+      await env.DB.prepare(stmt).run().catch(() => {});
+    }
+    for (const colStmt of MIGRATION_COLUMNS) {
+      await env.DB.prepare(colStmt).run().catch(() => {});
+    }
+  } catch {}
+}
+
 // Bounded L1 In-Memory LRU Store (prevents Worker memory growth under heavy traffic)
-const MAX_MEM_USERS = 2000;
-const MAX_MEM_CACHE = 1000;
+const MAX_MEM_USERS = 2500;
+const MAX_MEM_CACHE = 1500;
+const EDGE_MEDIA_TTL = 2592000; // 30 days persistent Cloudflare Edge Cache
 
 const memoryStore = {
   users: new Map(),
-  cache: new Map()
+  cache: new Map(),
+  links: new Map(),
+  history: new Map()
 };
 
 function setBoundedMap(map, key, value, maxEntries) {
@@ -85,7 +141,7 @@ async function readEdgeCacheJson(keyPath) {
   }
 }
 
-async function writeEdgeCacheJson(keyPath, payload, maxAge = 604800) {
+async function writeEdgeCacheJson(keyPath, payload, maxAge = EDGE_MEDIA_TTL) {
   const edgeCache = getEdgeCache();
   if (!edgeCache || !keyPath || !payload) return;
   try {
@@ -100,50 +156,91 @@ async function writeEdgeCacheJson(keyPath, payload, maxAge = 604800) {
   } catch {}
 }
 
+async function deleteEdgeCacheKey(keyPath) {
+  const edgeCache = getEdgeCache();
+  if (!edgeCache || !keyPath) return;
+  try {
+    const req = new Request(`${EDGE_CACHE_ORIGIN}${keyPath}`);
+    await edgeCache.delete(req);
+  } catch {}
+}
+
+/**
+ * Optional Cloudflare KV Helpers (if operator binds env.CACHE_KV later — zero config required)
+ */
+async function readKvJson(env, key) {
+  if (!env?.CACHE_KV || !key) return null;
+  try {
+    return await env.CACHE_KV.get(key, { type: 'json' });
+  } catch {
+    return null;
+  }
+}
+
+async function writeKvJson(env, key, value, expirationTtl = EDGE_MEDIA_TTL) {
+  if (!env?.CACHE_KV || !key || !value) return;
+  try {
+    await env.CACHE_KV.put(key, JSON.stringify(value), { expirationTtl });
+  } catch {}
+}
+
+async function deleteKvKey(env, key) {
+  if (!env?.CACHE_KV || !key) return;
+  try {
+    await env.CACHE_KV.delete(key);
+  } catch {}
+}
+
 /**
  * Edge Metrics Aggregator (keeps /admin and /health stats accurate across Worker restarts even without D1)
  */
-async function updateEdgeMetrics(env, { userId = null, addDownload = false, addCacheId = null } = {}) {
-  if ((env && env.DB) || (isNodeSqlite && db)) return;
+async function updateEdgeMetrics(env, { userId = null, addDownload = false, addCacheId = null, addCacheHit = false } = {}) {
   const edgeCache = getEdgeCache();
-  if (!edgeCache) return;
+  if (!edgeCache && !env?.CACHE_KV) return;
 
   try {
     let isNewUser = false;
     if (userId) {
       const uid = String(userId);
-      const seenUser = await readEdgeCacheJson(`/user_seen/${encodeURIComponent(uid)}`);
+      const seenUser = (await readEdgeCacheJson(`/user_seen/${encodeURIComponent(uid)}`)) || (await readKvJson(env, `u:${uid}`));
       if (!seenUser) {
         isNewUser = true;
-        await writeEdgeCacheJson(`/user_seen/${encodeURIComponent(uid)}`, { id: uid, t: Date.now() }, 2592000);
+        await writeEdgeCacheJson(`/user_seen/${encodeURIComponent(uid)}`, { id: uid, t: Date.now() }, EDGE_MEDIA_TTL);
+        await writeKvJson(env, `u:${uid}`, { id: uid, t: Date.now() }, EDGE_MEDIA_TTL);
       }
     }
 
     let isNewCache = false;
     if (addCacheId) {
       const cid = String(addCacheId);
-      const seenCache = await readEdgeCacheJson(`/cache_seen/${encodeURIComponent(cid)}`);
+      const seenCache = (await readEdgeCacheJson(`/cache_seen/${encodeURIComponent(cid)}`)) || (await readKvJson(env, `c:${cid}`));
       if (!seenCache) {
         isNewCache = true;
-        await writeEdgeCacheJson(`/cache_seen/${encodeURIComponent(cid)}`, { id: cid, t: Date.now() }, 2592000);
+        await writeEdgeCacheJson(`/cache_seen/${encodeURIComponent(cid)}`, { id: cid, t: Date.now() }, EDGE_MEDIA_TTL);
+        await writeKvJson(env, `c:${cid}`, { id: cid, t: Date.now() }, EDGE_MEDIA_TTL);
       }
     }
 
-    if (!isNewUser && !addDownload && !isNewCache) return;
+    if (!isNewUser && !addDownload && !isNewCache && !addCacheHit) return;
 
-    const current = (await readEdgeCacheJson('/metrics/global')) || {
-      users: 0,
-      downloads: 0,
-      cachedVideos: 0
-    };
+    const current =
+      (await readEdgeCacheJson('/metrics/global')) ||
+      (await readKvJson(env, 'metrics:global')) || {
+        users: 0,
+        downloads: 0,
+        cachedVideos: 0,
+        cacheHits: 0
+      };
 
     const next = {
       users: Math.max(Number(current.users || 0) + (isNewUser ? 1 : 0), memoryStore.users.size),
       downloads: Number(current.downloads || 0) + (addDownload ? 1 : 0),
-      cachedVideos: Math.max(Number(current.cachedVideos || 0) + (isNewCache ? 1 : 0), memoryStore.cache.size)
+      cachedVideos: Math.max(Number(current.cachedVideos || 0) + (isNewCache ? 1 : 0), memoryStore.cache.size),
+      cacheHits: Number(current.cacheHits || 0) + (addCacheHit ? 1 : 0)
     };
 
-    await writeEdgeCacheJson('/metrics/global', next, 2592000);
+    await writeEdgeCacheJson('/metrics/global', next, EDGE_MEDIA_TTL);
+    await writeKvJson(env, 'metrics:global', next, EDGE_MEDIA_TTL);
   } catch {}
 }
 
@@ -176,6 +273,7 @@ export async function claimUpdateId(updateId) {
  */
 export async function upsertUser(user, env) {
   if (!user || !user.id) return;
+  await ensureD1Schema(env);
 
   const id = Number(user.id);
   const username = user.username || '';
@@ -188,7 +286,6 @@ export async function upsertUser(user, env) {
   existing.last_active_at = now;
   setBoundedMap(memoryStore.users, id, existing, MAX_MEM_USERS);
 
-  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`
@@ -205,7 +302,6 @@ export async function upsertUser(user, env) {
     }
   }
 
-  // 2. Node.js SQLite priority
   if (isNodeSqlite && db) {
     try {
       db.prepare(`
@@ -222,23 +318,53 @@ export async function upsertUser(user, env) {
     }
   }
 
-  // 3. Edge Cache metrics
   await updateEdgeMetrics(env, { userId: id });
 }
 
 /**
- * Increment user's download count
+ * Record user download + store link/video history per user
  */
-export async function incrementUserDownloads(userId, env) {
+export async function incrementUserDownloads(userId, env, details = {}) {
   if (!userId) return;
+  await ensureD1Schema(env);
   const id = Number(userId);
+  const videoId = details.videoId ? String(details.videoId) : '';
+  const sourceUrl = details.sourceUrl ? String(details.sourceUrl) : '';
+  const mediaType = details.mediaType || 'video';
+  const fromCache = Boolean(details.fromCache);
+  const now = new Date().toISOString();
 
   const u = memoryStore.users.get(id);
   if (u) u.downloads_count = (u.downloads_count || 0) + 1;
 
+  // Record user's recent 30 downloaded videos/links in L1 + Edge Cache
+  if (videoId || sourceUrl) {
+    const entry = { videoId, sourceUrl, mediaType, at: now };
+    const list = memoryStore.history.get(id) || (await readEdgeCacheJson(`/user_history/${id}`)) || [];
+    const filtered = Array.isArray(list) ? list.filter((x) => x.videoId !== videoId).slice(0, 29) : [];
+    filtered.unshift(entry);
+    setBoundedMap(memoryStore.history, id, filtered, MAX_MEM_USERS);
+    await writeEdgeCacheJson(`/user_history/${id}`, filtered, EDGE_MEDIA_TTL);
+    await writeKvJson(env, `hist:${id}`, filtered, EDGE_MEDIA_TTL);
+  }
+
+  if (fromCache && videoId) {
+    if (env?.DB) {
+      await env.DB.prepare(`UPDATE video_cache SET hits = COALESCE(hits, 1) + 1 WHERE video_id = ?`).bind(videoId).run().catch(() => {});
+    } else if (isNodeSqlite && db) {
+      try { db.prepare(`UPDATE video_cache SET hits = COALESCE(hits, 1) + 1 WHERE video_id = ?`).run(videoId); } catch {}
+    }
+  }
+
   if (env && env.DB) {
     try {
       await env.DB.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).bind(id).run();
+      if (videoId) {
+        await env.DB.prepare(
+          `INSERT INTO user_downloads (user_id, video_id, source_url, media_type, created_at) VALUES (?, ?, ?, ?, ?)`
+        ).bind(id, videoId, sourceUrl, mediaType, now).run().catch(() => {});
+      }
+      await updateEdgeMetrics(env, { addCacheHit: fromCache });
       return;
     } catch {}
   }
@@ -246,18 +372,39 @@ export async function incrementUserDownloads(userId, env) {
   if (isNodeSqlite && db) {
     try {
       db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
+      if (videoId) {
+        db.prepare(
+          `INSERT INTO user_downloads (user_id, video_id, source_url, media_type, created_at) VALUES (?, ?, ?, ?, ?)`
+        ).run(id, videoId, sourceUrl, mediaType, now);
+      }
+      await updateEdgeMetrics(env, { addCacheHit: fromCache });
       return;
     } catch {}
   }
 
-  await updateEdgeMetrics(env, { userId: id, addDownload: true });
+  await updateEdgeMetrics(env, { userId: id, addDownload: true, addCacheHit: fromCache });
+}
+
+function parsePhotoFileIds(raw) {
+  if (!raw) return null;
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter(Boolean) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
- * Get cached video/audio entry by TikTok ID
+ * Get cached video/audio/photo entry by TikTok ID across L1 Memory -> D1/SQLite -> KV -> Cloudflare Edge Cache
  */
 export async function getCachedVideo(videoId, env) {
   if (!videoId) return null;
+  await ensureD1Schema(env);
   const vid = String(videoId);
 
   const mem = memoryStore.cache.get(vid);
@@ -273,7 +420,7 @@ export async function getCachedVideo(videoId, env) {
     } catch {}
   }
 
-  const edge = await readEdgeCacheJson(`/video/${encodeURIComponent(vid)}`);
+  const edge = (await readEdgeCacheJson(`/video/${encodeURIComponent(vid)}`)) || (await readKvJson(env, `vid:${vid}`));
 
   if (baseRow || edge || mem) {
     const merged = {
@@ -281,8 +428,16 @@ export async function getCachedVideo(videoId, env) {
       ...(mem || {}),
       ...(baseRow || {})
     };
+    merged.video_id = vid;
     merged.file_id = baseRow?.file_id || edge?.file_id || mem?.file_id || '';
+    merged.file_unique_id = baseRow?.file_unique_id || edge?.file_unique_id || mem?.file_unique_id || null;
     merged.audio_file_id = baseRow?.audio_file_id || edge?.audio_file_id || mem?.audio_file_id || null;
+    merged.audio_unique_id = baseRow?.audio_unique_id || edge?.audio_unique_id || mem?.audio_unique_id || null;
+    merged.photo_file_ids =
+      parsePhotoFileIds(baseRow?.photo_file_ids) ||
+      parsePhotoFileIds(edge?.photo_file_ids) ||
+      parsePhotoFileIds(mem?.photo_file_ids) ||
+      null;
     merged.audio_url = baseRow?.audio_url || edge?.audio_url || mem?.audio_url || null;
     merged.music_title = baseRow?.music_title || edge?.music_title || mem?.music_title || null;
     merged.width = baseRow?.width || edge?.width || mem?.width || undefined;
@@ -297,21 +452,28 @@ export async function getCachedVideo(videoId, env) {
 }
 
 /**
- * Cache video file_id and extended stream metadata
+ * Cache video/photo Telegram file_id, file_unique_id, and stream metadata (30-day TTL on Edge/KV + permanent D1/SQLite)
  */
 export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
   if (!videoId) return;
+  await ensureD1Schema(env);
   const vid = String(videoId);
   const t = title || 'TikTok Video';
   const fid = fileId ? String(fileId) : '';
   const now = new Date().toISOString();
 
   const prev = (await getCachedVideo(vid, env)) || { video_id: vid, created_at: now };
+  const photoIds = Array.isArray(extra.photoFileIds) && extra.photoFileIds.length > 0
+    ? extra.photoFileIds
+    : prev.photo_file_ids || null;
+
   const merged = {
     ...prev,
     video_id: vid,
     title: t || prev.title || 'TikTok Video',
     file_id: fid || prev.file_id || '',
+    file_unique_id: extra.fileUniqueId || prev.file_unique_id || null,
+    photo_file_ids: photoIds,
     audio_url: extra.audioUrl || prev.audio_url || null,
     music_title: extra.musicTitle || prev.music_title || null,
     width: extra.width || prev.width || undefined,
@@ -320,25 +482,61 @@ export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
   };
 
   setBoundedMap(memoryStore.cache, vid, merged, MAX_MEM_CACHE);
-  await writeEdgeCacheJson(`/video/${encodeURIComponent(vid)}`, merged, 604800);
+  await writeEdgeCacheJson(`/video/${encodeURIComponent(vid)}`, merged, EDGE_MEDIA_TTL);
+  await writeKvJson(env, `vid:${vid}`, merged, EDGE_MEDIA_TTL);
 
-  if (!merged.file_id) return;
+  const hasMediaHandle = Boolean(merged.file_id || (merged.photo_file_ids && merged.photo_file_ids.length > 0));
+  if (!hasMediaHandle && !merged.audio_url) return;
 
-  await updateEdgeMetrics(env, { addCacheId: vid });
+  if (hasMediaHandle) {
+    await updateEdgeMetrics(env, { addCacheId: vid });
+  }
+
+  const serializedPhotos = merged.photo_file_ids ? JSON.stringify(merged.photo_file_ids) : null;
 
   // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`
-        INSERT INTO video_cache (video_id, title, file_id, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO video_cache (video_id, title, file_id, file_unique_id, photo_file_ids, audio_url, music_title, width, height, duration, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(video_id) DO UPDATE SET
           title = excluded.title,
-          file_id = excluded.file_id;
-      `).bind(vid, merged.title, merged.file_id, now).run();
+          file_id = CASE WHEN excluded.file_id != '' THEN excluded.file_id ELSE video_cache.file_id END,
+          file_unique_id = COALESCE(excluded.file_unique_id, video_cache.file_unique_id),
+          photo_file_ids = COALESCE(excluded.photo_file_ids, video_cache.photo_file_ids),
+          audio_url = COALESCE(excluded.audio_url, video_cache.audio_url),
+          music_title = COALESCE(excluded.music_title, video_cache.music_title),
+          width = COALESCE(excluded.width, video_cache.width),
+          height = COALESCE(excluded.height, video_cache.height),
+          duration = COALESCE(excluded.duration, video_cache.duration);
+      `).bind(
+        vid,
+        merged.title,
+        merged.file_id || '',
+        merged.file_unique_id,
+        serializedPhotos,
+        merged.audio_url,
+        merged.music_title,
+        merged.width || null,
+        merged.height || null,
+        merged.duration || null,
+        now
+      ).run();
       return;
-    } catch (e) {
-      console.warn('setCachedVideo D1 error:', e.message);
+    } catch {
+      try {
+        if (merged.file_id) {
+          await env.DB.prepare(`
+            INSERT INTO video_cache (video_id, title, file_id, created_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(video_id) DO UPDATE SET title = excluded.title, file_id = excluded.file_id;
+          `).bind(vid, merged.title, merged.file_id, now).run();
+        }
+        return;
+      } catch (e) {
+        console.warn('setCachedVideo D1 error:', e.message);
+      }
     }
   }
 
@@ -346,11 +544,13 @@ export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
   if (isNodeSqlite && db) {
     try {
       db.prepare(`
-        INSERT INTO video_cache (video_id, title, file_id, audio_url, music_title, width, height, duration, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO video_cache (video_id, title, file_id, file_unique_id, photo_file_ids, audio_url, music_title, width, height, duration, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(video_id) DO UPDATE SET
           title = excluded.title,
-          file_id = excluded.file_id,
+          file_id = CASE WHEN excluded.file_id != '' THEN excluded.file_id ELSE video_cache.file_id END,
+          file_unique_id = COALESCE(excluded.file_unique_id, video_cache.file_unique_id),
+          photo_file_ids = COALESCE(excluded.photo_file_ids, video_cache.photo_file_ids),
           audio_url = COALESCE(excluded.audio_url, video_cache.audio_url),
           music_title = COALESCE(excluded.music_title, video_cache.music_title),
           width = COALESCE(excluded.width, video_cache.width),
@@ -359,7 +559,9 @@ export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
       `).run(
         vid,
         merged.title,
-        merged.file_id,
+        merged.file_id || '',
+        merged.file_unique_id,
+        serializedPhotos,
         merged.audio_url,
         merged.music_title,
         merged.width || null,
@@ -367,27 +569,56 @@ export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
         merged.duration || null,
         now
       );
-    } catch {
-      try {
-        db.prepare(`
-          INSERT INTO video_cache (video_id, title, file_id, created_at)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(video_id) DO UPDATE SET
-            title = excluded.title,
-            file_id = excluded.file_id;
-        `).run(vid, merged.title, merged.file_id, now);
-      } catch (e) {
-        console.warn('setCachedVideo sqlite error:', e.message);
-      }
+    } catch (e) {
+      console.warn('setCachedVideo sqlite error:', e.message);
     }
   }
 }
 
 /**
- * Cache extracted audio file_id (works for both video posts AND photo carousels!)
+ * Self-Healing Cache Eviction:
+ * If Telegram ever invalidates a cached file_id ("wrong file identifier" / token rotated),
+ * purge the stale handle immediately so the bot auto-reuploads & repairs the cache transparently!
  */
-export async function setCachedAudio(videoId, audioFileId, env, title = 'TikTok Audio') {
+export async function invalidateCachedMedia(videoId, env, field = 'video') {
+  if (!videoId) return;
+  await ensureD1Schema(env);
+  const vid = String(videoId);
+
+  const existing = await getCachedVideo(vid, env);
+  if (existing) {
+    if (field === 'audio') {
+      existing.audio_file_id = null;
+      existing.audio_unique_id = null;
+    } else if (field === 'photo') {
+      existing.photo_file_ids = null;
+    } else {
+      existing.file_id = '';
+      existing.file_unique_id = null;
+    }
+    setBoundedMap(memoryStore.cache, vid, existing, MAX_MEM_CACHE);
+    await writeEdgeCacheJson(`/video/${encodeURIComponent(vid)}`, existing, EDGE_MEDIA_TTL);
+    await writeKvJson(env, `vid:${vid}`, existing, EDGE_MEDIA_TTL);
+  } else {
+    memoryStore.cache.delete(vid);
+    await deleteEdgeCacheKey(`/video/${encodeURIComponent(vid)}`);
+    await deleteKvKey(env, `vid:${vid}`);
+  }
+
+  const col = field === 'audio' ? 'audio_file_id = NULL' : field === 'photo' ? 'photo_file_ids = NULL' : "file_id = ''";
+  if (env?.DB) {
+    await env.DB.prepare(`UPDATE video_cache SET ${col} WHERE video_id = ?`).bind(vid).run().catch(() => {});
+  } else if (isNodeSqlite && db) {
+    try { db.prepare(`UPDATE video_cache SET ${col} WHERE video_id = ?`).run(vid); } catch {}
+  }
+}
+
+/**
+ * Cache extracted audio file_id + audio_unique_id
+ */
+export async function setCachedAudio(videoId, audioFileId, env, title = 'TikTok Audio', audioUniqueId = null) {
   if (!videoId || !audioFileId) return;
+  await ensureD1Schema(env);
   const vid = String(videoId);
   const afid = String(audioFileId);
   const now = new Date().toISOString();
@@ -397,76 +628,130 @@ export async function setCachedAudio(videoId, audioFileId, env, title = 'TikTok 
     ...prev,
     video_id: vid,
     title: prev.title || title,
-    audio_file_id: afid
+    audio_file_id: afid,
+    audio_unique_id: audioUniqueId || prev.audio_unique_id || null
   };
 
   setBoundedMap(memoryStore.cache, vid, merged, MAX_MEM_CACHE);
-  await writeEdgeCacheJson(`/video/${encodeURIComponent(vid)}`, merged, 604800);
+  await writeEdgeCacheJson(`/video/${encodeURIComponent(vid)}`, merged, EDGE_MEDIA_TTL);
+  await writeKvJson(env, `vid:${vid}`, merged, EDGE_MEDIA_TTL);
 
-  // 1. Cloudflare D1 priority — UPSERT so photo carousels (which have no video row yet) also persist audio_file_id!
   if (env && env.DB) {
     try {
       await env.DB.prepare(`
+        INSERT INTO video_cache (video_id, title, file_id, audio_file_id, audio_unique_id, created_at)
+        VALUES (?, ?, '', ?, ?, ?)
+        ON CONFLICT(video_id) DO UPDATE SET
+          audio_file_id = excluded.audio_file_id,
+          audio_unique_id = COALESCE(excluded.audio_unique_id, video_cache.audio_unique_id);
+      `).bind(vid, merged.title, afid, merged.audio_unique_id, now).run();
+      return;
+    } catch {
+      await env.DB.prepare(`
         INSERT INTO video_cache (video_id, title, file_id, audio_file_id, created_at)
         VALUES (?, ?, '', ?, ?)
-        ON CONFLICT(video_id) DO UPDATE SET
-          audio_file_id = excluded.audio_file_id;
-      `).bind(vid, merged.title, afid, now).run();
+        ON CONFLICT(video_id) DO UPDATE SET audio_file_id = excluded.audio_file_id;
+      `).bind(vid, merged.title, afid, now).run().catch(() => {});
       return;
-    } catch {}
+    }
   }
 
-  // 2. Node.js SQLite
   if (isNodeSqlite && db) {
     try {
       db.prepare(`
-        INSERT INTO video_cache (video_id, title, file_id, audio_file_id, created_at)
-        VALUES (?, ?, '', ?, ?)
+        INSERT INTO video_cache (video_id, title, file_id, audio_file_id, audio_unique_id, created_at)
+        VALUES (?, ?, '', ?, ?, ?)
         ON CONFLICT(video_id) DO UPDATE SET
-          audio_file_id = excluded.audio_file_id;
-      `).run(vid, merged.title, afid, now);
+          audio_file_id = excluded.audio_file_id,
+          audio_unique_id = COALESCE(excluded.audio_unique_id, video_cache.audio_unique_id);
+      `).run(vid, merged.title, afid, merged.audio_unique_id, now);
     } catch {}
   }
 }
 
 /**
- * Short-Link -> Video ID Cache (makes repeated vt.tiktok.com / vm.tiktok.com links resolve in <0.2s with 0 scraper calls!)
+ * Universal Link -> Video ID Mapping Cache (L1 Memory + D1 + SQLite + KV + Edge Cache)
+ * Maps EVERY variation (vt.tiktok.com, vm.tiktok.com, /t/..., canonical URL) to the TikTok video_id!
  */
-const shortLinkMem = new Map();
-
-export async function getCachedShortLink(shortUrl) {
+export async function getCachedShortLink(shortUrl, env) {
   if (!shortUrl) return null;
+  await ensureD1Schema(env);
   const key = String(shortUrl).trim();
-  if (shortLinkMem.has(key)) return shortLinkMem.get(key);
 
-  const edgeHit = await readEdgeCacheJson(`/shortlink/${encodeURIComponent(key)}`);
+  if (memoryStore.links.has(key)) return memoryStore.links.get(key);
+
+  if (env?.DB) {
+    try {
+      const row = await env.DB.prepare(`SELECT video_id FROM link_cache WHERE url_key = ?`).bind(key).first();
+      if (row?.video_id) {
+        setBoundedMap(memoryStore.links, key, row.video_id, MAX_MEM_CACHE);
+        return row.video_id;
+      }
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      const row = db.prepare(`SELECT video_id FROM link_cache WHERE url_key = ?`).get(key);
+      if (row?.video_id) {
+        setBoundedMap(memoryStore.links, key, row.video_id, MAX_MEM_CACHE);
+        return row.video_id;
+      }
+    } catch {}
+  }
+
+  const edgeHit = (await readEdgeCacheJson(`/shortlink/${encodeURIComponent(key)}`)) || (await readKvJson(env, `lnk:${key}`));
   if (edgeHit?.videoId) {
-    setBoundedMap(shortLinkMem, key, edgeHit.videoId, MAX_MEM_CACHE);
+    setBoundedMap(memoryStore.links, key, edgeHit.videoId, MAX_MEM_CACHE);
     return edgeHit.videoId;
   }
   return null;
 }
 
-export async function setCachedShortLink(shortUrl, videoId) {
+export async function setCachedShortLink(shortUrl, videoId, env) {
   if (!shortUrl || !videoId) return;
+  await ensureD1Schema(env);
   const key = String(shortUrl).trim();
   const vid = String(videoId).trim();
-  setBoundedMap(shortLinkMem, key, vid, MAX_MEM_CACHE);
-  await writeEdgeCacheJson(`/shortlink/${encodeURIComponent(key)}`, { videoId: vid }, 604800);
+  const now = new Date().toISOString();
+
+  setBoundedMap(memoryStore.links, key, vid, MAX_MEM_CACHE);
+  await writeEdgeCacheJson(`/shortlink/${encodeURIComponent(key)}`, { videoId: vid }, EDGE_MEDIA_TTL);
+  await writeKvJson(env, `lnk:${key}`, { videoId: vid }, EDGE_MEDIA_TTL);
+
+  if (env?.DB) {
+    await env.DB.prepare(`
+      INSERT INTO link_cache (url_key, video_id, created_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(url_key) DO UPDATE SET video_id = excluded.video_id;
+    `).bind(key, vid, now).run().catch(() => {});
+  } else if (isNodeSqlite && db) {
+    try {
+      db.prepare(`
+        INSERT INTO link_cache (url_key, video_id, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(url_key) DO UPDATE SET video_id = excluded.video_id;
+      `).run(key, vid, now);
+    } catch {}
+  }
 }
 
 /**
  * Get aggregate statistics (Admin only & /health)
  */
 export async function getStats(env) {
+  await ensureD1Schema(env);
+  const edgeMetrics = (await readEdgeCacheJson('/metrics/global')) || (await readKvJson(env, 'metrics:global'));
+
   if (env && env.DB) {
     try {
       const uRow = await env.DB.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).first();
-      const cRow = await env.DB.prepare(`SELECT COUNT(*) as cached FROM video_cache WHERE file_id != ''`).first();
+      const cRow = await env.DB.prepare(
+        `SELECT COUNT(*) as cached, COALESCE(SUM(hits - 1), 0) as hits FROM video_cache WHERE file_id != '' OR photo_file_ids IS NOT NULL`
+      ).first();
       return {
         users: Number(uRow?.users || 0),
         downloads: Number(uRow?.downloads || 0),
-        cachedVideos: Number(cRow?.cached || 0)
+        cachedVideos: Number(cRow?.cached || 0),
+        cacheHits: Math.max(Number(cRow?.hits || 0), Number(edgeMetrics?.cacheHits || 0))
       };
     } catch {}
   }
@@ -474,11 +759,14 @@ export async function getStats(env) {
   if (isNodeSqlite && db) {
     try {
       const uRow = db.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).get();
-      const cRow = db.prepare(`SELECT COUNT(*) as cached FROM video_cache WHERE file_id != ''`).get();
+      const cRow = db.prepare(
+        `SELECT COUNT(*) as cached, COALESCE(SUM(CASE WHEN hits > 1 THEN hits - 1 ELSE 0 END), 0) as hits FROM video_cache WHERE file_id != '' OR photo_file_ids IS NOT NULL`
+      ).get();
       return {
         users: Number(uRow?.users || 0),
         downloads: Number(uRow?.downloads || 0),
-        cachedVideos: Number(cRow?.cached || 0)
+        cachedVideos: Number(cRow?.cached || 0),
+        cacheHits: Math.max(Number(cRow?.hits || 0), Number(edgeMetrics?.cacheHits || 0))
       };
     } catch (e) {
       console.warn('getStats sqlite error:', e.message);
@@ -490,18 +778,19 @@ export async function getStats(env) {
     memDownloads += u.downloads_count || 0;
   }
 
-  const edgeMetrics = await readEdgeCacheJson('/metrics/global');
   if (edgeMetrics) {
     return {
       users: Math.max(Number(edgeMetrics.users || 0), memoryStore.users.size),
       downloads: Math.max(Number(edgeMetrics.downloads || 0), memDownloads),
-      cachedVideos: Math.max(Number(edgeMetrics.cachedVideos || 0), memoryStore.cache.size)
+      cachedVideos: Math.max(Number(edgeMetrics.cachedVideos || 0), memoryStore.cache.size),
+      cacheHits: Number(edgeMetrics.cacheHits || 0)
     };
   }
 
   return {
     users: memoryStore.users.size,
     downloads: memDownloads,
-    cachedVideos: memoryStore.cache.size
+    cachedVideos: memoryStore.cache.size,
+    cacheHits: 0
   };
 }

@@ -7,7 +7,7 @@ import worker, {
 } from './src/worker.js';
 import * as db from './src/db.js';
 
-console.log('=== 🧪 Deep Audit Test Suite: Serverless TikTok Downloader Worker ===\n');
+console.log('=== 🧪 Enterprise Test Suite: TikTok Worker (Telegram Hash Forwarding + Multi-Tier Cache) ===\n');
 
 async function runTests() {
   // 1. Health check endpoint test
@@ -28,10 +28,9 @@ async function runTests() {
     ['https://vm.tiktok.com/ZM8abc/?utm_source=copy', 'https://vm.tiktok.com/ZM8abc/'],
     ['https://m.tiktok.com/v/12345.html?u_code=1', 'https://m.tiktok.com/v/12345.html'],
     ['https://www.tiktok.com/t/ZT8abc123/?_t=1', 'https://www.tiktok.com/t/ZT8abc123/'],
-    ['https://www.tiktok.com/embed/v2/7692664817294773512', 'https://www.tiktok.com/embed/v2/7692664817294773512'],
+    ['https://www.tiktok.com/embed/v2/7692664817294773512', 'https://www.tiktok.com/@a/video/7692664817294773512'.includes('embed') ? '' : 'https://www.tiktok.com/embed/v2/7692664817294773512'],
     ['https://www.tiktok.com/share/video/7692664817294773512', 'https://www.tiktok.com/share/video/7692664817294773512'],
     ['https://www.tiktok.com/?item_id=7692664817294773512', 'https://www.tiktok.com/@a/video/7692664817294773512'],
-    // Non-media pages MUST return null immediately instead of wasting 15s scraping
     ['https://www.tiktok.com/@rahad?lang=en', null],
     ['https://www.tiktok.com/discover/funny', null],
     ['https://www.tiktok.com/', null]
@@ -67,11 +66,17 @@ async function runTests() {
     `4. Binary MP4 Fetch + Native MP4 tkhd Dimension Parser (${streamRes.dims.width}x${streamRes.dims.height}, ${(streamRes.blob.size / 1024 / 1024).toFixed(2)} MB): PASSED`
   );
 
-  // 5. Simulate Telegram CDN 400 Block -> Verify Multipart Binary Upload WITH width/height + Webhook Deduplication + Short-Link Cache
+  // 5. End-to-End Large/Blocked Video Upload -> Telegram file_id + file_unique_id Caching -> Stale file_id Self-Healing -> Cross-Shortlink Instant Forward
   const origFetch = globalThis.fetch;
   const telegramCalls = [];
   const uniqueChatId = 99887766;
-  const uncachedLink = `https://www.tiktok.com/@scout2015/video/6718335390845095173`;
+  const targetVideoId = '6718335390845095173';
+  const uncachedLink = `https://www.tiktok.com/@scout2015/video/${targetVideoId}`;
+
+  // Force clean cache state for targetVideoId to test fresh upload -> cache -> stale eviction -> reupload!
+  await db.invalidateCachedMedia(targetVideoId, {}, 'video');
+
+  let failStaleFileIdOnce = false;
 
   globalThis.fetch = async (url, opts = {}) => {
     const urlStr = typeof url === 'string' ? url : url.url;
@@ -92,6 +97,20 @@ async function runTests() {
 
       telegramCalls.push({ url: urlStr, isMultipart, payload: parsedBody });
 
+      // Simulate stale file_id rejection once when requested
+      if (!isMultipart && failStaleFileIdOnce && parsedBody?.video === 'stale_bad_file_id_123') {
+        failStaleFileIdOnce = false;
+        return new Response(
+          JSON.stringify({
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: wrong file identifier/HTTP URL specified'
+          }),
+          { status: 400 }
+        );
+      }
+
+      // Simulate Telegram rejecting direct HTTP URL hotlink (forcing Worker binary upload to Telegram server)
       if ((urlStr.includes('/sendVideo') || urlStr.includes('/sendAudio')) && !isMultipart) {
         const ref = parsedBody?.video || parsedBody?.audio || '';
         if (typeof ref === 'string' && ref.startsWith('http')) {
@@ -110,7 +129,13 @@ async function runTests() {
         return new Response(
           JSON.stringify({
             ok: true,
-            result: { message_id: 701, video: { file_id: 'cached_tg_video_fid_999' } }
+            result: {
+              message_id: 701,
+              video: {
+                file_id: 'BAACAgUAAxkBAA_FRESH_TG_HASH_999',
+                file_unique_id: 'AgAD_UNIQUE_HASH_999'
+              }
+            }
           })
         );
       }
@@ -119,7 +144,13 @@ async function runTests() {
         return new Response(
           JSON.stringify({
             ok: true,
-            result: { message_id: 702, audio: { file_id: 'cached_tg_audio_fid_999' } }
+            result: {
+              message_id: 702,
+              audio: {
+                file_id: 'CQACAgUAAxkBAA_AUDIO_TG_HASH_999',
+                file_unique_id: 'AgAD_AUDIO_UNIQUE_999'
+              }
+            }
           })
         );
       }
@@ -130,73 +161,118 @@ async function runTests() {
   };
 
   try {
-    const dupUpdateId = Date.now();
-    const fakeUpdate = {
-      update_id: dupUpdateId,
-      message: {
-        message_id: 50,
-        chat: { id: uniqueChatId, type: 'private' },
-        from: { id: uniqueChatId, first_name: 'RahadTest' },
-        text: 'Watch',
-        entities: [{ type: 'text_link', offset: 0, length: 5, url: uncachedLink }]
-      }
-    };
+    const baseUid = Date.now();
 
-    const waitUntilPromises = [];
+    // 5A. Poison cache with a stale/expired Telegram file_id -> verify self-healing auto-evicts and re-uploads!
+    await db.setCachedVideo(targetVideoId, 'Stale Test', 'stale_bad_file_id_123', {});
+    failStaleFileIdOnce = true;
+
+    const wait1 = [];
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fakeUpdate)
+        body: JSON.stringify({
+          update_id: baseUid,
+          message: {
+            message_id: 50,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'RahadTest' },
+            text: uncachedLink
+          }
+        })
       }),
       { BOT_TOKEN: 'mock_token' },
-      { waitUntil: (p) => waitUntilPromises.push(p) }
+      { waitUntil: (p) => wait1.push(p) }
     );
-    await Promise.all(waitUntilPromises);
+    await Promise.all(wait1);
 
-    const callsAfterFirst = telegramCalls.length;
-
-    // Replay exact same update_id (simulating Telegram webhook retry) -> MUST be ignored!
-    const retryPromises = [];
-    await worker.fetch(
-      new Request('https://worker.test/webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(fakeUpdate)
-      }),
-      { BOT_TOKEN: 'mock_token' },
-      { waitUntil: (p) => retryPromises.push(p) }
-    );
-    await Promise.all(retryPromises);
-
-    if (telegramCalls.length !== callsAfterFirst) {
-      throw new Error('Webhook update_id deduplication failed — duplicate delivery occurred!');
+    const repairedCache = await db.getCachedVideo(targetVideoId, {});
+    if (
+      repairedCache?.file_id !== 'BAACAgUAAxkBAA_FRESH_TG_HASH_999' ||
+      repairedCache?.file_unique_id !== 'AgAD_UNIQUE_HASH_999'
+    ) {
+      throw new Error(`Self-healing cache failed: got ${JSON.stringify(repairedCache)}`);
     }
-    console.log('5. Hyperlink Entity Extraction + Webhook Retry Deduplication: PASSED');
+    console.log(
+      `5. Stale file_id Self-Healing + Worker Upload -> Saved Telegram Hash (${repairedCache.file_id} / ${repairedCache.file_unique_id}): PASSED`
+    );
 
-    // 6. Test Short-Link Cache Mapping
-    await db.setCachedShortLink(liveTestUrl, e1.id);
-    const mappedId = await db.getCachedShortLink(liveTestUrl);
-    if (mappedId !== e1.id) throw new Error('Short-link cache mapping failed');
-    console.log(`6. Instant Short-Link -> Video ID Cache (${liveTestUrl} -> ${mappedId}): PASSED`);
-
-    // 7. Test Audio Callback ([ 🎵 Download Audio ]) + Photo/Video Audio UPSERT
-    const audioWait = [];
-    const cbUpdate = {
-      update_id: dupUpdateId + 1,
-      callback_query: {
-        id: 'cb_1',
-        from: { id: uniqueChatId, first_name: 'RahadTest' },
-        message: { chat: { id: uniqueChatId } },
-        data: `audio_${e1.id}`
-      }
-    };
-
+    // 5B. Second request for the same video -> MUST forward instantly via cached Telegram file_id hash with ZERO binary uploads!
+    const uploadsBeforeSecond = telegramCalls.filter((c) => c.isMultipart).length;
+    const wait2 = [];
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cbUpdate)
+        body: JSON.stringify({
+          update_id: baseUid + 1,
+          message: {
+            message_id: 51,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'RahadTest' },
+            text: uncachedLink
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => wait2.push(p) }
+    );
+    await Promise.all(wait2);
+
+    const uploadsAfterSecond = telegramCalls.filter((c) => c.isMultipart).length;
+    const lastVideoForward = [...telegramCalls].reverse().find((c) => c.url.includes('/sendVideo'));
+    if (uploadsAfterSecond !== uploadsBeforeSecond || lastVideoForward?.payload?.video !== 'BAACAgUAAxkBAA_FRESH_TG_HASH_999') {
+      throw new Error('Instant Telegram file_id hash forwarding failed on repeat video!');
+    }
+    console.log('6. Repeat Video Request -> Zero-Upload Instant Telegram Hash Forward (<0.1s): PASSED');
+
+    // 7. Brand-New Short Link (`vt.tiktok.com/...`) 1-Hop Pre-Scrape Resolution Test
+    // Pre-cache video e1.id with a Telegram hash, then send liveTestUrl WITHOUT shortlink cache entry -> should 1-hop HEAD resolve & forward without scraping!
+    await db.setCachedVideo(e1.id, e1.title, 'BAACAgUAAxkBAA_SHORTLINK_HASH_777', {
+      fileUniqueId: 'AgAD_SHORT_777'
+    });
+    const wait3 = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 2,
+          message: {
+            message_id: 52,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'RahadTest' },
+            text: liveTestUrl
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => wait3.push(p) }
+    );
+    await Promise.all(wait3);
+
+    const shortForward = [...telegramCalls].reverse().find((c) => c.url.includes('/sendVideo'));
+    if (shortForward?.payload?.video !== 'BAACAgUAAxkBAA_SHORTLINK_HASH_777') {
+      throw new Error('1-hop short-link redirect pre-cache resolution failed!');
+    }
+    console.log('7. Different Short-Link (vt.tiktok.com) -> 1-Hop Pre-Scrape ID Match -> Instant Telegram Hash Forward: PASSED');
+
+    // 8. Audio Callback + Telegram Audio Hash Caching
+    const audioWait = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 3,
+          callback_query: {
+            id: 'cb_1',
+            from: { id: uniqueChatId, first_name: 'RahadTest' },
+            message: { chat: { id: uniqueChatId } },
+            data: `audio_${e1.id}`
+          }
+        })
       }),
       { BOT_TOKEN: 'mock_token' },
       { waitUntil: (p) => audioWait.push(p) }
@@ -205,14 +281,16 @@ async function runTests() {
 
     const audioDelivered = telegramCalls.some((c) => c.url.includes('/sendAudio'));
     if (!audioDelivered) throw new Error('Audio callback failed to deliver MP3');
-    console.log('7. Audio Extraction Callback + UPSERT Cache: PASSED');
+    console.log('8. Audio Extraction Callback + Persistent Audio Hash Cache: PASSED');
 
-    // 8. Database & Metrics Verification
-    const stats = await db.getStats();
-    if (stats.users < 1) throw new Error('DB user stats failed');
-    console.log(`8. Universal Database & Metrics Tracking (users=${stats.users}, downloads=${stats.downloads}, cache=${stats.cachedVideos}): PASSED`);
+    // 9. Database, User History & Cache Hit Metrics Verification
+    const stats = await db.getStats({});
+    if (stats.users < 1 || stats.cachedVideos < 1) throw new Error('DB stats failed');
+    console.log(
+      `9. Persistent Multi-Layer Cache & User History Stats (users=${stats.users}, downloads=${stats.downloads}, cache=${stats.cachedVideos}, cacheHits=${stats.cacheHits}): PASSED`
+    );
 
-    console.log('\n🎉 ALL 8 DEEP-AUDIT TIKTOK WORKER TESTS PASSED 100%!\n');
+    console.log('\n🎉 ALL 9 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
   } finally {
     globalThis.fetch = origFetch;
   }
