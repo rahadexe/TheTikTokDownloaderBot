@@ -1,5 +1,4 @@
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 let db = null;
@@ -32,16 +31,59 @@ try {
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
-} catch (e) {
+
+  // Non-breaking optional columns for audio metadata caching
+  try { db.exec(`ALTER TABLE video_cache ADD COLUMN audio_url TEXT;`); } catch {}
+  try { db.exec(`ALTER TABLE video_cache ADD COLUMN music_title TEXT;`); } catch {}
+} catch {
   // Graceful fallback for non-node environments (Cloudflare Workers / In-Memory)
   isNodeSqlite = false;
 }
 
-// In-Memory fallback store for environments without native node:sqlite or D1
+// In-Memory store (fast L1 cache in Workers & local fallback)
 const memoryStore = {
   users: new Map(),
   cache: new Map()
 };
+
+const EDGE_CACHE_ORIGIN = 'https://cache.tiktokdownloader.internal';
+
+function getEdgeCache() {
+  try {
+    if (typeof caches !== 'undefined' && caches && caches.default) {
+      return caches.default;
+    }
+  } catch {}
+  return null;
+}
+
+async function readEdgeCache(videoId) {
+  const edgeCache = getEdgeCache();
+  if (!edgeCache || !videoId) return null;
+  try {
+    const req = new Request(`${EDGE_CACHE_ORIGIN}/video/${encodeURIComponent(String(videoId))}`);
+    const res = await edgeCache.match(req);
+    if (!res) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function writeEdgeCache(videoId, payload) {
+  const edgeCache = getEdgeCache();
+  if (!edgeCache || !videoId || !payload) return;
+  try {
+    const req = new Request(`${EDGE_CACHE_ORIGIN}/video/${encodeURIComponent(String(videoId))}`);
+    const res = new Response(JSON.stringify(payload), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, max-age=604800'
+      }
+    });
+    await edgeCache.put(req, res);
+  } catch {}
+}
 
 /**
  * Register or update user
@@ -54,7 +96,14 @@ export async function upsertUser(user, env) {
   const firstName = user.first_name || '';
   const now = new Date().toISOString();
 
-  // 1. Cloudflare D1 priority (when running on Cloudflare Workers)
+  // Always update in-memory L1
+  const existing = memoryStore.users.get(id) || { id, downloads_count: 0, created_at: now };
+  existing.username = username;
+  existing.first_name = firstName;
+  existing.last_active_at = now;
+  memoryStore.users.set(id, existing);
+
+  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       await env.DB.prepare(`
@@ -71,30 +120,21 @@ export async function upsertUser(user, env) {
     }
   }
 
-  // 2. Node.js SQLite priority (when running via run-polling.js)
+  // 2. Node.js SQLite priority
   if (isNodeSqlite && db) {
     try {
-      const stmt = db.prepare(`
+      db.prepare(`
         INSERT INTO users (id, username, first_name, downloads_count, created_at, last_active_at)
         VALUES (?, ?, ?, 0, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           username = excluded.username,
           first_name = excluded.first_name,
           last_active_at = excluded.last_active_at;
-      `);
-      stmt.run(id, username, firstName, now, now);
-      return;
+      `).run(id, username, firstName, now, now);
     } catch (e) {
       console.warn('upsertUser sqlite error:', e.message);
     }
   }
-
-  // 3. Fallback in-memory
-  const existing = memoryStore.users.get(id) || { id, downloads_count: 0, created_at: now };
-  existing.username = username;
-  existing.first_name = firstName;
-  existing.last_active_at = now;
-  memoryStore.users.set(id, existing);
 }
 
 /**
@@ -104,7 +144,9 @@ export async function incrementUserDownloads(userId, env) {
   if (!userId) return;
   const id = Number(userId);
 
-  // 1. Cloudflare D1 priority
+  const u = memoryStore.users.get(id);
+  if (u) u.downloads_count = (u.downloads_count || 0) + 1;
+
   if (env && env.DB) {
     try {
       await env.DB.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).bind(id).run();
@@ -112,31 +154,27 @@ export async function incrementUserDownloads(userId, env) {
     } catch {}
   }
 
-  // 2. Node.js SQLite
   if (isNodeSqlite && db) {
     try {
       db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
-      return;
     } catch {}
   }
-
-  // 3. In-memory fallback
-  const u = memoryStore.users.get(id);
-  if (u) u.downloads_count = (u.downloads_count || 0) + 1;
 }
 
 /**
- * Get cached video by TikTok ID
+ * Get cached video/audio entry by TikTok ID
  */
 export async function getCachedVideo(videoId, env) {
   if (!videoId) return null;
   const vid = String(videoId);
 
+  const mem = memoryStore.cache.get(vid);
+
   // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       const row = await env.DB.prepare(`SELECT * FROM video_cache WHERE video_id = ?`).bind(vid).first();
-      return row || null;
+      if (row) return { ...mem, ...row };
     } catch {}
   }
 
@@ -144,23 +182,46 @@ export async function getCachedVideo(videoId, env) {
   if (isNodeSqlite && db) {
     try {
       const row = db.prepare(`SELECT * FROM video_cache WHERE video_id = ?`).get(vid);
-      return row || null;
+      if (row) return { ...mem, ...row };
     } catch {}
   }
 
-  // 3. In-memory fallback
-  return memoryStore.cache.get(vid) || null;
+  // 3. Cloudflare Edge Cache API (survives Worker isolate restarts without D1!)
+  const edge = await readEdgeCache(vid);
+  if (edge) {
+    const merged = { ...edge, ...mem };
+    memoryStore.cache.set(vid, merged);
+    return merged;
+  }
+
+  // 4. In-memory fallback
+  return mem || null;
 }
 
 /**
- * Cache video file_id
+ * Cache video file_id and optional audio stream metadata
  */
-export async function setCachedVideo(videoId, title, fileId, env) {
-  if (!videoId || !fileId) return;
+export async function setCachedVideo(videoId, title, fileId, env, extra = {}) {
+  if (!videoId) return;
   const vid = String(videoId);
   const t = title || 'TikTok Video';
-  const fid = String(fileId);
+  const fid = fileId ? String(fileId) : '';
   const now = new Date().toISOString();
+
+  const prev = (await getCachedVideo(vid, env)) || { video_id: vid, created_at: now };
+  const merged = {
+    ...prev,
+    video_id: vid,
+    title: t || prev.title || 'TikTok Video',
+    file_id: fid || prev.file_id || '',
+    audio_url: extra.audioUrl || prev.audio_url || null,
+    music_title: extra.musicTitle || prev.music_title || null
+  };
+
+  memoryStore.cache.set(vid, merged);
+  await writeEdgeCache(vid, merged);
+
+  if (!merged.file_id) return;
 
   // 1. Cloudflare D1 priority
   if (env && env.DB) {
@@ -171,7 +232,7 @@ export async function setCachedVideo(videoId, title, fileId, env) {
         ON CONFLICT(video_id) DO UPDATE SET
           title = excluded.title,
           file_id = excluded.file_id;
-      `).bind(vid, t, fid, now).run();
+      `).bind(vid, merged.title, merged.file_id, now).run();
       return;
     } catch (e) {
       console.warn('setCachedVideo D1 error:', e.message);
@@ -182,32 +243,48 @@ export async function setCachedVideo(videoId, title, fileId, env) {
   if (isNodeSqlite && db) {
     try {
       db.prepare(`
-        INSERT INTO video_cache (video_id, title, file_id, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO video_cache (video_id, title, file_id, audio_url, music_title, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(video_id) DO UPDATE SET
           title = excluded.title,
-          file_id = excluded.file_id;
-      `).run(vid, t, fid, now);
-      return;
-    } catch (e) {
-      console.warn('setCachedVideo sqlite error:', e.message);
+          file_id = excluded.file_id,
+          audio_url = COALESCE(excluded.audio_url, video_cache.audio_url),
+          music_title = COALESCE(excluded.music_title, video_cache.music_title);
+      `).run(vid, merged.title, merged.file_id, merged.audio_url, merged.music_title, now);
+    } catch {
+      try {
+        db.prepare(`
+          INSERT INTO video_cache (video_id, title, file_id, created_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(video_id) DO UPDATE SET
+            title = excluded.title,
+            file_id = excluded.file_id;
+        `).run(vid, merged.title, merged.file_id, now);
+      } catch (e) {
+        console.warn('setCachedVideo sqlite error:', e.message);
+      }
     }
   }
-
-  // 3. In-memory fallback
-  const existing = memoryStore.cache.get(vid) || { video_id: vid };
-  existing.title = t;
-  existing.file_id = fid;
-  memoryStore.cache.set(vid, existing);
 }
 
 /**
  * Cache extracted audio file_id
  */
-export async function setCachedAudio(videoId, audioFileId, env) {
+export async function setCachedAudio(videoId, audioFileId, env, title = 'TikTok Audio') {
   if (!videoId || !audioFileId) return;
   const vid = String(videoId);
   const afid = String(audioFileId);
+  const now = new Date().toISOString();
+
+  const prev = (await getCachedVideo(vid, env)) || { video_id: vid, title, file_id: '', created_at: now };
+  const merged = {
+    ...prev,
+    video_id: vid,
+    audio_file_id: afid
+  };
+
+  memoryStore.cache.set(vid, merged);
+  await writeEdgeCache(vid, merged);
 
   // 1. Cloudflare D1 priority
   if (env && env.DB) {
@@ -220,21 +297,22 @@ export async function setCachedAudio(videoId, audioFileId, env) {
   // 2. Node.js SQLite
   if (isNodeSqlite && db) {
     try {
-      db.prepare(`UPDATE video_cache SET audio_file_id = ? WHERE video_id = ?`).run(afid, vid);
-      return;
+      const info = db.prepare(`UPDATE video_cache SET audio_file_id = ? WHERE video_id = ?`).run(afid, vid);
+      if (!info || info.changes === 0) {
+        db.prepare(`
+          INSERT INTO video_cache (video_id, title, file_id, audio_file_id, created_at)
+          VALUES (?, ?, '', ?, ?)
+          ON CONFLICT(video_id) DO UPDATE SET audio_file_id = excluded.audio_file_id;
+        `).run(vid, merged.title || title, afid, now);
+      }
     } catch {}
   }
-
-  // 3. In-memory fallback
-  const item = memoryStore.cache.get(vid);
-  if (item) item.audio_file_id = afid;
 }
 
 /**
  * Get aggregate statistics (Admin only)
  */
 export async function getStats(env) {
-  // 1. Cloudflare D1 priority
   if (env && env.DB) {
     try {
       const uRow = await env.DB.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).first();
@@ -247,7 +325,6 @@ export async function getStats(env) {
     } catch {}
   }
 
-  // 2. Node.js SQLite
   if (isNodeSqlite && db) {
     try {
       const uRow = db.prepare(`SELECT COUNT(*) as users, COALESCE(SUM(downloads_count), 0) as downloads FROM users`).get();
@@ -262,7 +339,6 @@ export async function getStats(env) {
     }
   }
 
-  // 3. In-memory fallback
   let totalDownloads = 0;
   for (const u of memoryStore.users.values()) {
     totalDownloads += (u.downloads_count || 0);

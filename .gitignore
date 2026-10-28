@@ -10,3 +10,4 @@ node_modules/
 *.sqlite
 *.db
 .DS_Store
+.taste-skill/
