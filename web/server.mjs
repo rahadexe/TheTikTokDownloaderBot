@@ -25,7 +25,13 @@ const MIME_TYPES = {
 
 function sanitizeInputUrl(raw) {
   if (!raw || typeof raw !== 'string') return '';
-  let clean = raw.trim().replace(/[.,;:!?)\]>]+$/, '');
+  const match = raw.match(
+    /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/i
+  );
+  let clean = (match ? match[0] : raw).trim().replace(/[.,;:!?)\]>]+$/, '');
+  if (!/^https?:\/\//i.test(clean) && /tiktok\.com\//i.test(clean)) {
+    clean = 'https://' + clean;
+  }
   try {
     const u = new URL(clean);
     const host = u.hostname.toLowerCase();
@@ -197,9 +203,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. API: Proxy Download stream (forces browser download attachment with clean filename)
+  // 2. API: Proxy Download stream (forces browser download attachment with clean filename, supports fallback & inline preview)
   if (pathname === '/api/download') {
     const mediaUrl = reqUrl.searchParams.get('url');
+    const fallbackUrl = reqUrl.searchParams.get('fallback');
+    const isInline = reqUrl.searchParams.get('inline') === '1';
     const filename = reqUrl.searchParams.get('filename') || 'tiktok_media.mp4';
     if (!mediaUrl) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
@@ -208,12 +216,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const mediaRes = await fetch(mediaUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-          'Referer': 'https://www.tiktok.com/'
-        }
-      });
+      const upstreamHeaders = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+        'Referer': 'https://www.tiktok.com/'
+      };
+      if (req.headers.range) {
+        upstreamHeaders['Range'] = req.headers.range;
+      }
+
+      let mediaRes = await fetch(mediaUrl, { headers: upstreamHeaders });
+      const contentLen = Number(mediaRes.headers.get('content-length') || 0);
+
+      // Automatic fallback if HD CDN returns 503/403 or tiny 280-byte error stub
+      if ((!mediaRes.ok || (contentLen > 0 && contentLen < 4096)) && fallbackUrl && fallbackUrl !== mediaUrl) {
+        mediaRes = await fetch(fallbackUrl, { headers: upstreamHeaders });
+      }
 
       if (!mediaRes.ok) {
         res.writeHead(mediaRes.status, { 'Content-Type': 'text/plain' });
@@ -221,11 +238,26 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      res.writeHead(200, {
-        'Content-Type': mediaRes.headers.get('content-type') || 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${encodeURIComponent(filename)}"`,
-        'Content-Length': mediaRes.headers.get('content-length') || ''
-      });
+      const rawType = mediaRes.headers.get('content-type') || '';
+      const safeType = rawType.startsWith('text/plain')
+        ? (filename.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp4')
+        : (rawType || 'application/octet-stream');
+
+      const outHeaders = {
+        'Content-Type': safeType,
+        'Accept-Ranges': 'bytes'
+      };
+      if (!isInline) {
+        outHeaders['Content-Disposition'] = `attachment; filename="${encodeURIComponent(filename)}"`;
+      }
+      if (mediaRes.headers.get('content-length')) {
+        outHeaders['Content-Length'] = mediaRes.headers.get('content-length');
+      }
+      if (mediaRes.headers.get('content-range')) {
+        outHeaders['Content-Range'] = mediaRes.headers.get('content-range');
+      }
+
+      res.writeHead(mediaRes.status, outHeaders);
 
       const reader = mediaRes.body.getReader();
       while (true) {

@@ -112,13 +112,33 @@ export default {
 };
 
 /**
+ * Extract link from Telegram message text, caption, OR text_link entities (hyperlink words)
+ */
+function extractInputTextWithEntities(msg) {
+  const baseText = (msg.text || msg.caption || '').trim();
+  const entities = [...(msg.entities || []), ...(msg.caption_entities || [])];
+  for (const ent of entities) {
+    if (ent?.type === 'text_link' && ent.url && /tiktok\.com/i.test(ent.url)) {
+      return baseText ? `${baseText} ${ent.url}` : ent.url;
+    }
+  }
+  return baseText;
+}
+
+/**
  * Handle incoming Telegram Update
  */
 async function handleUpdate(update, token, env = {}) {
+  // 0. Deduplicate retried webhook updates (prevents double delivery)
+  if (update?.update_id !== undefined) {
+    const claimed = await db.claimUpdateId(update.update_id);
+    if (!claimed) return;
+  }
+
   if (update.message?.from) {
-    db.upsertUser(update.message.from, env).catch(() => {});
+    await db.upsertUser(update.message.from, env).catch(() => {});
   } else if (update.callback_query?.from) {
-    db.upsertUser(update.callback_query.from, env).catch(() => {});
+    await db.upsertUser(update.callback_query.from, env).catch(() => {});
   }
 
   // 1. Callback Queries (Audio extraction)
@@ -131,19 +151,19 @@ async function handleUpdate(update, token, env = {}) {
     return handleInlineQuery(update.inline_query, token, env);
   }
 
-  // 3. Regular Messages (support both text and media captions containing links)
+  // 3. Regular Messages (support text, media captions, and hyperlinked entities)
   const msg = update.message;
   if (!msg) return;
-  const rawText = msg.text || msg.caption || '';
-  if (!rawText) return;
+  const text = extractInputTextWithEntities(msg);
+  if (!text) return;
 
   const chatId = msg.chat.id;
-  const text = rawText.trim();
   const botTag = await getBotTag(token);
   const { channelTag, adminId } = getBotConfig(env);
+  const cmdToken = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 
-  // Admin command (/admin)
-  if (text === '/admin') {
+  // Admin command (/admin) — strictly isolated to ADMIN_ID
+  if (cmdToken === '/admin') {
     if (chatId === adminId || msg.from?.id === adminId) {
       const stats = await db.getStats(env);
       return tgCall(token, 'sendMessage', {
@@ -156,18 +176,23 @@ async function handleUpdate(update, token, env = {}) {
         parse_mode: 'HTML'
       });
     }
+    return;
   }
 
-  // /start or /help command
-  if (text === '/start' || text.startsWith('/start ') || text === '/help') {
-    const welcome =
-      `Updates: ${channelTag}\n\n` +
-      `Send any TikTok link to download video without watermark or extract audio.`;
+  // /start or /help command (supports group /start@BotName and deep-link TikTok payloads)
+  if (cmdToken === '/start' || cmdToken === '/help') {
+    const payloadPart = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
+    const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
+    if (!deepTikTokUrl) {
+      const welcome =
+        `Updates: ${channelTag}\n\n` +
+        `Send any TikTok link to download video without watermark or extract audio.`;
 
-    return tgCall(token, 'sendMessage', {
-      chat_id: chatId,
-      text: welcome
-    });
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: welcome
+      });
+    }
   }
 
   // Detect TikTok link
@@ -182,18 +207,26 @@ async function handleUpdate(update, token, env = {}) {
     return;
   }
 
-  // Fast L1/Edge Cache check if direct video ID is present in URL
-  const idMatch = tiktokUrl.match(/\/(?:video|v)\/([0-9]+)/);
-  const directId = idMatch ? idMatch[1] : null;
+  // Fast L1/Edge Cache check: direct video ID in URL OR previously resolved short link (vt.tiktok.com / vm.tiktok.com)
+  const directMatch = tiktokUrl.match(/\/(?:video|v|embed\/v2|share\/video)\/([0-9]+)/);
+  const directId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl);
 
   if (directId) {
     const cached = await db.getCachedVideo(directId, env);
     if (cached && cached.file_id) {
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
       const safeTitle = safeUnicodeSlice(cached.title || 'TikTok Video', 300);
-      const sent = await sendVideoByIdOrUrl(token, chatId, cached.file_id, safeTitle, botTag, cached.video_id || directId);
+      const sent = await sendVideoByIdOrUrl(
+        token,
+        chatId,
+        cached.file_id,
+        safeTitle,
+        botTag,
+        cached.video_id || directId,
+        cached
+      );
       if (sent?.ok) {
-        db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+        await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
         return;
       }
     }
@@ -208,7 +241,7 @@ async function handleUpdate(update, token, env = {}) {
   const statusMsgId = statusMsg?.result?.message_id;
 
   try {
-    let data = await extractTikTokData(tiktokUrl);
+    const data = await extractTikTokData(tiktokUrl);
 
     if (!data || (!data.videoUrl && !(data.isPhoto && data.images?.length))) {
       if (statusMsgId) {
@@ -219,6 +252,10 @@ async function handleUpdate(update, token, env = {}) {
         });
       }
       return;
+    }
+
+    if (data.id && !directMatch) {
+      await db.setCachedShortLink(tiktokUrl, data.id).catch(() => {});
     }
 
     const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 300);
@@ -238,44 +275,65 @@ async function handleUpdate(update, token, env = {}) {
         if (statusMsgId) {
           await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
         }
-        db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+        await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
         return;
       }
       throw new Error('Failed to deliver TikTok photo post');
     }
 
-    // Check resolved video ID cache (for short vt.tiktok.com / vm.tiktok.com links)
+    // Check resolved video ID cache (first time this short link maps to an already-cached video ID)
     if (data.id) {
       const cached = await db.getCachedVideo(data.id, env);
       if (cached && cached.file_id) {
-        const cachedSent = await sendVideoByIdOrUrl(token, chatId, cached.file_id, safeTitle, botTag, data.id);
+        const cachedSent = await sendVideoByIdOrUrl(
+          token,
+          chatId,
+          cached.file_id,
+          safeTitle,
+          botTag,
+          data.id,
+          cached
+        );
         if (cachedSent?.ok) {
           if (statusMsgId) {
             await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
           }
-          db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+          await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
           return;
         }
       }
     }
 
     // Deliver Video: Stage 1 (Fast CDN Hotlink) -> Stage 2 (Worker Binary Stream Upload) -> Stage 3 (Fresh Engine Re-Extract + Binary Upload)
-    let sent = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl);
+    const delivery = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl);
 
-    if (sent?.ok) {
+    if (delivery?.sent?.ok) {
       if (statusMsgId) {
         await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
       }
-      db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
-      const tgFileId = sent.result?.video?.file_id;
-      if (data.id) {
-        await db.setCachedVideo(data.id, data.title, tgFileId || '', env, {
-          audioUrl: data.audioUrl,
-          musicTitle: data.musicTitle
+      await db.incrementUserDownloads(msg.from?.id, env).catch(() => {});
+      const tgFileId = delivery.sent.result?.video?.file_id;
+      const finalId = data.id || delivery.meta?.id;
+      if (finalId) {
+        await db.setCachedShortLink(tiktokUrl, finalId).catch(() => {});
+        await db.setCachedVideo(finalId, data.title, tgFileId || '', env, {
+          audioUrl: data.audioUrl || delivery.meta?.audioUrl,
+          musicTitle: data.musicTitle || delivery.meta?.musicTitle,
+          width: delivery.meta?.width || data.width,
+          height: delivery.meta?.height || data.height,
+          duration: delivery.meta?.duration || data.duration
+        });
+      }
+    } else if (delivery?.tooLarge) {
+      if (statusMsgId) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: statusMsgId,
+          text: 'Video exceeds Telegram 50MB bot limit.'
         });
       }
     } else {
-      throw new Error(sent?.description || 'All video delivery tiers failed');
+      throw new Error(delivery?.sent?.description || 'All video delivery tiers failed');
     }
   } catch (err) {
     console.error('TikTok delivery error:', err);
@@ -291,19 +349,24 @@ async function handleUpdate(update, token, env = {}) {
 
 /**
  * Multi-tier video delivery:
- * 1) Fast Telegram URL Hotlink (0 Worker RAM) when stream is Telegram-compatible
- * 2) Direct Worker Fetch (with Referer + Cookies) -> Multipart FormData Binary Upload to Telegram (bypasses CDN 403/503 IP blocks & 20MB URL limit up to 50MB)
+ * 1) Fast Telegram URL Hotlink (0 Worker RAM) when stream is <= 19MB and Telegram-compatible
+ * 2) Direct Worker Fetch (with Referer + Cookies + MP4 dimension parser) -> Multipart FormData Binary Upload (up to 49MB)
  * 3) Self-healing fresh scrape via Direct TikTok / TikMate if primary CDN links expired
  */
 async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, originalUrl) {
   let sent = null;
+  let sawTooLarge = Boolean(
+    data.sizeBytes && data.sizeBytes > MAX_UPLOAD_BYTES && (!data.hdSizeBytes || data.hdSizeBytes > MAX_UPLOAD_BYTES)
+  );
 
-  // Stage 1: Try fast Telegram URL hotlinking if upstream returns standard video/mp4 without cookie lock
-  if (!data.requiresWorkerUpload) {
+  // Stage 1: Try fast Telegram URL hotlinking if upstream returns standard video/mp4 <= 19MB without cookie lock
+  const HOTLINK_SAFE_BYTES = 19 * 1024 * 1024;
+  const canHotlink = !data.requiresWorkerUpload && (!data.sizeBytes || data.sizeBytes <= HOTLINK_SAFE_BYTES);
+  if (canHotlink) {
     const hotlinkCandidates = uniqueStrings([data.videoUrl, data.tikwmProxyUrl, data.fallbackUrl]);
     for (const candidateUrl of hotlinkCandidates.slice(0, 2)) {
       sent = await sendVideoByIdOrUrl(token, chatId, candidateUrl, safeTitle, botTag, data.id, data);
-      if (sent?.ok) return sent;
+      if (sent?.ok) return { sent, meta: data, tooLarge: false };
     }
   }
 
@@ -318,23 +381,47 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
   ]);
 
   for (const streamUrl of binaryCandidates) {
-    const mediaBlob = await fetchMediaBlob(streamUrl, 'video/mp4', MIN_VIDEO_BYTES, data.cookies);
-    if (!mediaBlob) continue;
+    const media = await fetchMediaStream(streamUrl, 'video/mp4', MIN_VIDEO_BYTES, data.cookies);
+    if (media?.tooLarge) {
+      sawTooLarge = true;
+      continue;
+    }
+    if (!media?.blob) continue;
 
-    sent = await uploadVideoMultipart(token, chatId, mediaBlob, safeTitle, botTag, data.id, data);
-    if (sent?.ok) return sent;
+    const enrichedMeta = {
+      ...data,
+      width: data.width || media.dims?.width,
+      height: data.height || media.dims?.height
+    };
+
+    sent = await uploadVideoMultipart(token, chatId, media.blob, safeTitle, botTag, data.id, enrichedMeta);
+    if (sent?.ok) return { sent, meta: enrichedMeta, tooLarge: false };
   }
 
   // Stage 3: Self-healing fallback — if primary engine's CDN links failed, pull fresh signed stream from backup engines
   if (originalUrl && data.source !== 'tiktok_direct') {
     const directData = await extractFromTikTokDirect(originalUrl);
     if (directData?.videoUrl) {
-      const blob = await fetchMediaBlob(directData.videoUrl, 'video/mp4', MIN_VIDEO_BYTES, directData.cookies);
-      if (blob) {
+      const media = await fetchMediaStream(directData.videoUrl, 'video/mp4', MIN_VIDEO_BYTES, directData.cookies);
+      if (media?.tooLarge) sawTooLarge = true;
+      if (media?.blob) {
         if (!data.audioUrl && directData.audioUrl) data.audioUrl = directData.audioUrl;
         if (!data.id && directData.id) data.id = directData.id;
-        sent = await uploadVideoMultipart(token, chatId, blob, safeTitle, botTag, data.id || directData.id, directData);
-        if (sent?.ok) return sent;
+        const enrichedMeta = {
+          ...directData,
+          width: directData.width || media.dims?.width,
+          height: directData.height || media.dims?.height
+        };
+        sent = await uploadVideoMultipart(
+          token,
+          chatId,
+          media.blob,
+          safeTitle,
+          botTag,
+          data.id || directData.id,
+          enrichedMeta
+        );
+        if (sent?.ok) return { sent, meta: enrichedMeta, tooLarge: false };
       }
     }
   }
@@ -343,17 +430,31 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     const tmData = await extractFromTikMate(originalUrl);
     if (tmData) {
       for (const tmUrl of uniqueStrings([tmData.videoUrl, tmData.hdUrl])) {
-        const blob = await fetchMediaBlob(tmUrl, 'video/mp4', MIN_VIDEO_BYTES);
-        if (blob) {
+        const media = await fetchMediaStream(tmUrl, 'video/mp4', MIN_VIDEO_BYTES);
+        if (media?.tooLarge) sawTooLarge = true;
+        if (media?.blob) {
           if (!data.id && tmData.id) data.id = tmData.id;
-          sent = await uploadVideoMultipart(token, chatId, blob, safeTitle, botTag, data.id || tmData.id, tmData);
-          if (sent?.ok) return sent;
+          const enrichedMeta = {
+            ...tmData,
+            width: tmData.width || media.dims?.width,
+            height: tmData.height || media.dims?.height
+          };
+          sent = await uploadVideoMultipart(
+            token,
+            chatId,
+            media.blob,
+            safeTitle,
+            botTag,
+            data.id || tmData.id,
+            enrichedMeta
+          );
+          if (sent?.ok) return { sent, meta: enrichedMeta, tooLarge: false };
         }
       }
     }
   }
 
-  return sent;
+  return { sent, meta: data, tooLarge: sawTooLarge };
 }
 
 async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, videoId, meta = {}) {
@@ -367,9 +468,9 @@ async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, vi
     chat_id: chatId,
     video: videoRef,
     supports_streaming: true,
-    ...(meta.width ? { width: meta.width } : {}),
-    ...(meta.height ? { height: meta.height } : {}),
-    ...(meta.duration ? { duration: meta.duration } : {}),
+    ...(meta.width ? { width: Number(meta.width) } : {}),
+    ...(meta.height ? { height: Number(meta.height) } : {}),
+    ...(meta.duration ? { duration: Math.round(Number(meta.duration)) } : {}),
     ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {})
   };
 
@@ -418,7 +519,7 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
 }
 
 /**
- * Deliver TikTok Photo / Slideshow Carousel Posts
+ * Deliver TikTok Photo / Slideshow Carousel Posts (preserves [ 🎵 Download Audio ] button on albums too!)
  */
 async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
   const images = data.images.filter(Boolean);
@@ -426,7 +527,8 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
 
   const htmlCaption = `<b>${escapeHtml(safeTitle)}</b>\n\n${botTag} ♥️`;
   const plainCaption = `${safeTitle}\n\n${botTag} ♥️`;
-  const inlineKeyboard = data.id
+  const hasAudioAction = Boolean(data.id && data.audioUrl);
+  const inlineKeyboard = hasAudioAction
     ? [[{ text: '🎵 Download Audio', callback_data: `audio_${data.id}` }]]
     : undefined;
 
@@ -454,14 +556,14 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
     return !!sent?.ok;
   }
 
-  // Multi-photo carousel (Telegram allows up to 10 items per sendMediaGroup)
+  // Multi-photo carousel (Telegram allows up to 10 items per sendMediaGroup, and forbids inline_keyboard inside sendMediaGroup)
   let anyDelivered = false;
   for (let i = 0; i < images.length; i += 10) {
     const chunk = images.slice(i, i + 10);
     const mediaPayload = chunk.map((imgUrl, idx) => ({
       type: 'photo',
       media: imgUrl,
-      ...(i === 0 && idx === 0 ? { caption: htmlCaption, parse_mode: 'HTML' } : {})
+      ...(i === 0 && idx === 0 && !inlineKeyboard ? { caption: htmlCaption, parse_mode: 'HTML' } : {})
     }));
 
     let groupSent = await tgCall(token, 'sendMediaGroup', {
@@ -470,7 +572,6 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
     });
 
     if (!groupSent?.ok) {
-      // Binary upload fallback for photo album
       const blobs = await Promise.all(
         chunk.map((imgUrl) => fetchMediaBlob(imgUrl, 'image/jpeg', MIN_IMAGE_BYTES, data.cookies))
       );
@@ -487,7 +588,7 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
           return {
             type: 'photo',
             media: `attach://${fieldName}`,
-            ...(i === 0 && pos === 0 ? { caption: plainCaption } : {})
+            ...(i === 0 && pos === 0 && !inlineKeyboard ? { caption: plainCaption } : {})
           };
         });
         fd.append('media', JSON.stringify(attachMedia));
@@ -496,6 +597,23 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
     }
 
     if (groupSent?.ok) anyDelivered = true;
+  }
+
+  // Attach clean caption + [ 🎵 Download Audio ] button directly below the photo album
+  if (anyDelivered && inlineKeyboard) {
+    const capRes = await tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: htmlCaption,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: inlineKeyboard }
+    });
+    if (!capRes?.ok) {
+      await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: plainCaption,
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+    }
   }
 
   return anyDelivered;
@@ -595,7 +713,16 @@ async function handleCallback(cb, token, env = {}) {
       // 3b. Worker Binary Fetch + Multipart FormData Upload fallback
       const audioBlob = await fetchMediaBlob(audioUrl, 'audio/mpeg', MIN_AUDIO_BYTES, cookies);
       if (audioBlob) {
-        sentAudio = await uploadAudioMultipart(token, chatId, audioBlob, cleanTitle, botTag, htmlCaption, plainCaption, videoId);
+        sentAudio = await uploadAudioMultipart(
+          token,
+          chatId,
+          audioBlob,
+          cleanTitle,
+          botTag,
+          htmlCaption,
+          plainCaption,
+          videoId
+        );
         if (sentAudio?.ok) break;
       }
     }
@@ -606,7 +733,16 @@ async function handleCallback(cb, token, env = {}) {
       if (meta?.audioUrl) {
         const freshBlob = await fetchMediaBlob(meta.audioUrl, 'audio/mpeg', MIN_AUDIO_BYTES, meta.cookies);
         if (freshBlob) {
-          sentAudio = await uploadAudioMultipart(token, chatId, freshBlob, cleanTitle, botTag, htmlCaption, plainCaption, videoId);
+          sentAudio = await uploadAudioMultipart(
+            token,
+            chatId,
+            freshBlob,
+            cleanTitle,
+            botTag,
+            htmlCaption,
+            plainCaption,
+            videoId
+          );
         }
       }
     }
@@ -652,30 +788,68 @@ async function uploadAudioMultipart(token, chatId, audioBlob, cleanTitle, botTag
 
 /**
  * Handle Inline Query (@botname link)
+ * Uses cached Telegram file_id when available for 100% reliable delivery, else public tikwm proxy URL
  */
-async function handleInlineQuery(iq, token) {
+async function handleInlineQuery(iq, token, env = {}) {
   const q = (iq.query || '').trim();
   const tiktokUrl = extractTikTokUrl(q);
   if (!tiktokUrl) return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
 
   try {
+    const botTag = await getBotTag(token);
+
+    // Check fast cache first
+    const directMatch = tiktokUrl.match(/\/(?:video|v|embed\/v2|share\/video)\/([0-9]+)/);
+    const cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl);
+    if (cachedVidId) {
+      const cached = await db.getCachedVideo(cachedVidId, env);
+      if (cached?.file_id) {
+        const safeTitle = safeUnicodeSlice(cached.title || 'TikTok Video', 200);
+        return tgCall(token, 'answerInlineQuery', {
+          inline_query_id: iq.id,
+          results: [
+            {
+              type: 'video',
+              id: String(cachedVidId),
+              video_file_id: cached.file_id,
+              title: safeTitle,
+              caption: `<b>${escapeHtml(safeTitle)}</b>\n\n${botTag} ♥️`,
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${cachedVidId}` }]]
+              }
+            }
+          ],
+          cache_time: 300
+        });
+      }
+    }
+
     const data = await extractTikTokData(tiktokUrl);
     if (!data || !data.videoUrl) {
       return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
     }
 
-    const botTag = await getBotTag(token);
     const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 200);
+    // Prefer tikwmProxyUrl over cookie-bound direct URLs for Telegram inline video player
+    const publicInlineUrl = data.tikwmProxyUrl || (!data.requiresWorkerUpload ? data.videoUrl : null);
+    if (!publicInlineUrl) {
+      return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
+    }
+
     const results = [
       {
         type: 'video',
         id: String(data.id || Date.now()),
-        video_url: data.videoUrl,
+        video_url: publicInlineUrl,
         mime_type: 'video/mp4',
         thumb_url: data.thumbnail || 'https://raw.githubusercontent.com/TelegramBots/logos/main/logo.png',
         title: safeTitle,
         caption: `<b>${escapeHtml(safeTitle)}</b>\n\n${botTag} ♥️`,
-        parse_mode: 'HTML'
+        parse_mode: 'HTML',
+        ...(data.id
+          ? { reply_markup: { inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${data.id}` }]] } }
+          : {})
       }
     ];
 
@@ -759,6 +933,8 @@ async function extractFromTikWM(url) {
           musicTitle: d.music_info?.title || d.title || 'TikTok Audio',
           thumbnail: normalizeTikwmUrl(d.cover),
           duration: Number(d.duration || 0),
+          sizeBytes: Number(d.size || 0) || undefined,
+          hdSizeBytes: Number(d.hd_size || 0) || undefined,
           requiresWorkerUpload: false
         };
       }
@@ -840,13 +1016,20 @@ async function extractFromTikTokDirect(url) {
       }
     }
 
-    // Video post: prefer highest-bitrate H.264 stream for universal Telegram inline playback
+    // Video post: prefer highest-bitrate H.264 stream under 49MB for universal Telegram inline playback
     const bitrates = Array.isArray(item.video?.bitrateInfo) ? item.video.bitrateInfo : [];
     const h264Streams = bitrates
-      .filter((b) => /h264|avc/i.test(String(b?.CodecType || '')) && b?.PlayAddr?.UrlList?.[0])
+      .filter((b) => {
+        const isH264 = /h264|avc/i.test(String(b?.CodecType || ''));
+        const hasUrl = Boolean(b?.PlayAddr?.UrlList?.[0]);
+        const dataSize = Number(b?.PlayAddr?.DataSize || 0);
+        const fitsCap = !dataSize || dataSize <= MAX_UPLOAD_BYTES;
+        return isH264 && hasUrl && fitsCap;
+      })
       .sort((a, b) => (b.Bitrate || 0) - (a.Bitrate || 0));
 
     const bestH264 = h264Streams[0]?.PlayAddr?.UrlList?.[0] || null;
+    const bestSize = Number(h264Streams[0]?.PlayAddr?.DataSize || 0) || undefined;
     const playAddr = item.video?.playAddr || item.video?.PlayAddrStruct?.UrlList?.[0] || null;
     const downloadAddr = item.video?.downloadAddr || null;
     const primaryVideo = bestH264 || playAddr || downloadAddr;
@@ -869,6 +1052,7 @@ async function extractFromTikTokDirect(url) {
       width: Number(item.video?.width || 0) || undefined,
       height: Number(item.video?.height || 0) || undefined,
       duration: Number(item.video?.duration || 0) || undefined,
+      sizeBytes: bestSize,
       cookies: cookieHeader || null,
       requiresWorkerUpload: true
     };
@@ -909,7 +1093,6 @@ async function extractFromTikMate(url) {
           musicTitle: d2.desc || 'TikTok Audio',
           thumbnail: d2.cover || null,
           duration: 0,
-          // TikMate serves Content-Type: text/plain & HEAD -> 503, so Worker binary upload is required
           requiresWorkerUpload: true
         };
       }
@@ -921,9 +1104,44 @@ async function extractFromTikMate(url) {
 }
 
 /**
- * Fetch binary media stream safely inside Worker / Node for multipart Telegram upload
+ * Parse video width & height directly from MP4 `tkhd` atom inside binary buffer
+ * Ensures vertical 9:16 TikTok videos never display as squashed squares in Telegram mobile!
  */
-async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, cookies = null) {
+function parseMp4Dimensions(arrayBuffer) {
+  try {
+    const bytes = new Uint8Array(arrayBuffer);
+    const view = new DataView(arrayBuffer);
+    // Scan up to first 512KB and last 256KB (covers both faststart and trailing moov atoms)
+    const ranges = [[0, Math.min(bytes.length, 524288)]];
+    if (bytes.length > 524288) {
+      ranges.push([Math.max(524288, bytes.length - 262144), bytes.length]);
+    }
+
+    for (const [start, end] of ranges) {
+      for (let i = start; i <= end - 96; i++) {
+        // 't' (0x74), 'k' (0x6b), 'h' (0x68), 'd' (0x64)
+        if (bytes[i] === 0x74 && bytes[i + 1] === 0x6b && bytes[i + 2] === 0x68 && bytes[i + 3] === 0x64) {
+          const version = bytes[i + 4];
+          const dimOffset = i + 4 + (version === 1 ? 88 : 76);
+          if (dimOffset + 8 <= bytes.length) {
+            const w = view.getUint32(dimOffset, false) >>> 16;
+            const h = view.getUint32(dimOffset + 4, false) >>> 16;
+            if (w >= 64 && w <= 8192 && h >= 64 && h <= 8192) {
+              return { width: w, height: h };
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Fetch binary media stream safely inside Worker / Node for multipart Telegram upload
+ * Returns { blob, dims, tooLarge }
+ */
+async function fetchMediaStream(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, cookies = null) {
   if (!streamUrl) return null;
   try {
     const headers = {
@@ -944,11 +1162,14 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
     if (!res.ok) return null;
 
     const contentLength = Number(res.headers.get('content-length') || 0);
-    if (contentLength > MAX_UPLOAD_BYTES) return null;
+    if (contentLength > MAX_UPLOAD_BYTES) return { blob: null, dims: null, tooLarge: true };
     if (contentLength > 0 && contentLength < minBytes) return null;
 
     const buffer = await res.arrayBuffer();
-    if (buffer.byteLength < minBytes || buffer.byteLength > MAX_UPLOAD_BYTES) {
+    if (buffer.byteLength > MAX_UPLOAD_BYTES) {
+      return { blob: null, dims: null, tooLarge: true };
+    }
+    if (buffer.byteLength < minBytes) {
       return null;
     }
 
@@ -965,39 +1186,83 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
       return null;
     }
 
-    return new Blob([buffer], { type: mimeType });
+    const dims = mimeType === 'video/mp4' ? parseMp4Dimensions(buffer) : null;
+    return {
+      blob: new Blob([buffer], { type: mimeType }),
+      dims,
+      tooLarge: false
+    };
   } catch (err) {
-    console.warn('fetchMediaBlob failed:', err.message);
+    console.warn('fetchMediaStream failed:', err.message);
     return null;
   }
 }
 
+async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, cookies = null) {
+  const res = await fetchMediaStream(streamUrl, mimeType, minBytes, cookies);
+  return res?.blob || null;
+}
+
 /**
- * URL Extractor & Sanitizer
+ * URL Extractor, Validator & Sanitizer
+ * Supports schemeless links (vt.tiktok.com/...), strips attached emojis/punctuation, and rejects non-media profile/discover pages
  */
 function extractTikTokUrl(text) {
   if (!text || typeof text !== 'string') return null;
-  const match = text.match(/https?:\/\/(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[^\s<>"']+/i);
+
+  // Match full https://...tiktok.com/... OR schemeless (vt|vm|www|m).tiktok.com/...
+  const match = text.match(
+    /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/i
+  );
   if (!match) return null;
-  let cleanUrl = match[0].replace(/[.,;:!?)\]>]+$/, '');
+
+  let raw = match[0].trim().replace(/[.,;:!?)\]>]+$/, '');
+  if (!/^https?:\/\//i.test(raw)) {
+    raw = 'https://' + raw;
+  }
+
   try {
-    const u = new URL(cleanUrl);
+    const u = new URL(raw);
     const host = u.hostname.toLowerCase();
+    if (host !== 'tiktok.com' && !host.endsWith('.tiktok.com')) return null;
+
     const isShortHost =
       host === 'vt.tiktok.com' ||
       host === 'vm.tiktok.com' ||
       host === 'v.tiktok.com';
-    if (
-      isShortHost ||
-      u.pathname.includes('/video/') ||
-      u.pathname.includes('/photo/') ||
-      u.pathname.startsWith('/t/') ||
-      u.pathname.startsWith('/v/')
-    ) {
-      cleanUrl = `${u.origin}${u.pathname}`;
+
+    const itemId = u.searchParams.get('item_id') || u.searchParams.get('share_item_id');
+    if (itemId && /^[0-9]+$/.test(itemId)) {
+      return `https://www.tiktok.com/@a/video/${itemId}`;
     }
-  } catch {}
-  return cleanUrl;
+
+    const path = u.pathname.replace(/\/+$/, '');
+    if (!path || path === '') return null;
+
+    if (isShortHost) {
+      // Short links need at least a shortcode segment (e.g. /ZSgQuVgCe)
+      if (!/^\/[a-zA-Z0-9_-]{4,}$/.test(path)) return null;
+      return `${u.origin}${path}/`;
+    }
+
+    // Standard tiktok.com hosts: accept video, photo, /t/<code>, /v/<id>, /embed/..., /share/video/...
+    const isMediaPath =
+      /\/(?:video|photo)\/[0-9]+/i.test(path) ||
+      /^\/t\/[a-zA-Z0-9_-]+/i.test(path) ||
+      /^\/v\/[0-9]+/i.test(path) ||
+      /\/embed\/(?:v2\/)?[0-9]+/i.test(path) ||
+      /\/share\/video\/[0-9]+/i.test(path);
+
+    if (isMediaPath) {
+      const keepSlash = /^\/t\//i.test(path) ? '/' : '';
+      return `${u.origin}${path}${keepSlash}`;
+    }
+
+    // Reject bare profile links (/@username), /discover, /tag, /live so bot asks for a valid video link immediately
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1069,5 +1334,7 @@ export {
   extractFromTikMate,
   extractTikTokUrl,
   fetchMediaBlob,
+  fetchMediaStream,
+  parseMp4Dimensions,
   escapeHtml
 };

@@ -98,20 +98,21 @@ document.addEventListener('DOMContentLoaded', () => {
       mediaCaption.textContent = data.title || 'Untitled video';
       audioTitle.textContent = data.music.title || 'Original Sound';
 
-      // Setup Video Player
-      const playableVideo = data.downloads.hd_video || data.downloads.fast_video;
-      mediaVideo.src = playableVideo;
+      // Setup Video Player (prefer fast_video for reliable inline playback since TikTok HD CDN blocks direct browser <video> with 503)
+      const playableVideo = data.downloads.fast_video || data.downloads.hd_video;
+      mediaVideo.src = playableVideo ? `/api/download?url=${encodeURIComponent(playableVideo)}&inline=1` : '';
       mediaVideo.poster = data.cover || '';
       mediaVideo.load();
 
-      // Setup Download Links
+      // Setup Download Links (prefer fast_video when hd_video is v16-notes 503-prone, server proxy auto-falls back if needed)
       const videoFilename = `tiktok_${data.id || Date.now()}_clean.mp4`;
       const audioFilename = `tiktok_${data.id || Date.now()}_audio.mp3`;
 
-      // HD Video
+      // Primary Video Download
       if (data.downloads.hd_video || data.downloads.fast_video) {
         const targetVid = data.downloads.hd_video || data.downloads.fast_video;
-        btnHdVideo.href = `/api/download?url=${encodeURIComponent(targetVid)}&filename=${encodeURIComponent(videoFilename)}`;
+        const fallbackVid = data.downloads.fast_video || '';
+        btnHdVideo.href = `/api/download?url=${encodeURIComponent(targetVid)}&fallback=${encodeURIComponent(fallbackVid)}&filename=${encodeURIComponent(videoFilename)}`;
         btnHdVideo.style.display = 'flex';
       } else {
         btnHdVideo.style.display = 'none';
