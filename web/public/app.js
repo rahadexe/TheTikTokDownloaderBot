@@ -1,24 +1,19 @@
 document.addEventListener('DOMContentLoaded', () => {
   const extractForm = document.getElementById('extractForm');
   const dockUrl = document.getElementById('dockUrl');
-  const clearBtn = document.getElementById('clearBtn');
   const pasteBtn = document.getElementById('pasteBtn');
   const extractBtn = document.getElementById('extractBtn');
   const sampleBtn = document.getElementById('sampleBtn');
 
   const inspectorCard = document.getElementById('inspectorCard');
   const mediaVideo = document.getElementById('mediaVideo');
-  const playerOverlay = document.getElementById('playerOverlay');
-  const playBtn = document.getElementById('playBtn');
-  const playIcon = document.getElementById('playIcon');
-  const pauseIcon = document.getElementById('pauseIcon');
+  const playerTrigger = document.getElementById('playerTrigger');
 
   const creatorAvatar = document.getElementById('creatorAvatar');
   const creatorName = document.getElementById('creatorName');
   const creatorHandle = document.getElementById('creatorHandle');
   const mediaCaption = document.getElementById('mediaCaption');
   const audioTitle = document.getElementById('audioTitle');
-  const mediaMetrics = document.getElementById('mediaMetrics');
 
   const btnHdVideo = document.getElementById('btnHdVideo');
   const btnAudioMp3 = document.getElementById('btnAudioMp3');
@@ -26,59 +21,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnFastServer = document.getElementById('btnFastServer');
 
   // Video play/pause
-  function togglePlay() {
-    if (mediaVideo.paused) {
-      mediaVideo.play();
-      playerOverlay.classList.add('playing');
-      playIcon.style.display = 'none';
-      pauseIcon.style.display = 'block';
-    } else {
-      mediaVideo.pause();
-      playerOverlay.classList.remove('playing');
-      playIcon.style.display = 'block';
-      pauseIcon.style.display = 'none';
-    }
-  }
+  if (playerTrigger && mediaVideo) {
+    const playOverlay = playerTrigger.querySelector('.play-overlay');
+    playerTrigger.addEventListener('click', () => {
+      if (mediaVideo.paused) {
+        mediaVideo.play();
+        playOverlay.classList.add('playing');
+      } else {
+        mediaVideo.pause();
+        playOverlay.classList.remove('playing');
+      }
+    });
 
-  if (playerOverlay) {
-    playerOverlay.addEventListener('click', togglePlay);
-  }
-  if (mediaVideo) {
     mediaVideo.addEventListener('play', () => {
-      playerOverlay.classList.add('playing');
-      playIcon.style.display = 'none';
-      pauseIcon.style.display = 'block';
+      playOverlay.classList.add('playing');
     });
     mediaVideo.addEventListener('pause', () => {
-      playerOverlay.classList.remove('playing');
-      playIcon.style.display = 'block';
-      pauseIcon.style.display = 'none';
+      playOverlay.classList.remove('playing');
     });
     mediaVideo.addEventListener('ended', () => {
-      playerOverlay.classList.remove('playing');
-      playIcon.style.display = 'block';
-      pauseIcon.style.display = 'none';
+      playOverlay.classList.remove('playing');
     });
   }
-
-  // Format numbers (e.g. 1500000 -> 1.5M)
-  function formatNum(num) {
-    if (!num) return '0';
-    if (num >= 1000000) return (num / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return num.toLocaleString();
-  }
-
-  // Toggle clear button
-  dockUrl.addEventListener('input', () => {
-    clearBtn.style.display = dockUrl.value ? 'inline-flex' : 'none';
-  });
-
-  clearBtn.addEventListener('click', () => {
-    dockUrl.value = '';
-    clearBtn.style.display = 'none';
-    dockUrl.focus();
-  });
 
   // Paste button
   pasteBtn.addEventListener('click', async () => {
@@ -87,19 +51,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const text = await navigator.clipboard.readText();
         if (text) {
           dockUrl.value = text.trim();
-          clearBtn.style.display = 'inline-flex';
-          pasteBtn.innerHTML = `<span>✓ Pasted</span>`;
+          pasteBtn.textContent = '✓ Done';
           setTimeout(() => {
-            pasteBtn.innerHTML = `
-              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
-              <span>Paste</span>
-            `;
-          }, 1500);
+            pasteBtn.textContent = 'Paste';
+          }, 1200);
         }
       } else {
         dockUrl.focus();
       }
-    } catch (err) {
+    } catch {
       dockUrl.focus();
     }
   });
@@ -107,7 +67,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Try sample link
   sampleBtn.addEventListener('click', () => {
     dockUrl.value = 'https://vt.tiktok.com/ZSgQuVgCe/';
-    clearBtn.style.display = 'inline-flex';
     extractForm.dispatchEvent(new Event('submit'));
   });
 
@@ -121,7 +80,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnText = extractBtn.querySelector('.btn-text');
     const btnSpinner = extractBtn.querySelector('.btn-spinner');
     btnText.style.display = 'none';
-    btnSpinner.style.display = 'inline-flex';
+    btnSpinner.style.display = 'inline';
     extractBtn.disabled = true;
 
     try {
@@ -135,13 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Populate Data
       creatorAvatar.src = data.author.avatar || 'https://via.placeholder.com/100';
       creatorName.textContent = data.author.nickname || 'Creator';
-      creatorHandle.textContent = data.author.unique_id ? `@${data.author.unique_id}` : '@tiktok_user';
+      creatorHandle.textContent = data.author.unique_id ? `@${data.author.unique_id}` : '@tiktok';
       mediaCaption.textContent = data.title || 'Untitled video';
       audioTitle.textContent = data.music.title || 'Original Sound';
-
-      const viewsStr = formatNum(data.stats.views);
-      const likesStr = formatNum(data.stats.likes);
-      mediaMetrics.textContent = `${viewsStr} views · ${likesStr} likes`;
 
       // Setup Video Player
       const playableVideo = data.downloads.hd_video || data.downloads.fast_video;
@@ -173,7 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Cover image
       if (data.cover) {
         btnCover.href = data.cover;
-        btnCover.style.display = 'inline-flex';
+        btnCover.style.display = 'inline';
       } else {
         btnCover.style.display = 'none';
       }
@@ -181,14 +136,14 @@ document.addEventListener('DOMContentLoaded', () => {
       // Fast Server Mirror
       if (data.downloads.fast_video) {
         btnFastServer.href = `/api/download?url=${encodeURIComponent(data.downloads.fast_video)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnFastServer.style.display = 'inline-flex';
+        btnFastServer.style.display = 'inline';
       } else {
         btnFastServer.style.display = 'none';
       }
 
       // Reveal & Smooth Scroll
-      inspectorCard.style.display = 'grid';
-      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      inspectorCard.style.display = 'flex';
+      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
     } catch (err) {
       alert(`⚠️ ${err.message || 'Error occurred while resolving video.'}`);
