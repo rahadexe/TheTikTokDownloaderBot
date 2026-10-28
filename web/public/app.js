@@ -9,7 +9,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const pasteBtn = document.getElementById('pasteBtn');
   const pasteBtnLabel = document.getElementById('pasteBtnLabel');
   const sampleBtn = document.getElementById('sampleBtn');
-  const modePills = document.querySelectorAll('.mode-pill');
   const extractBtn = document.getElementById('extractBtn');
 
   const errorBanner = document.getElementById('errorBanner');
@@ -60,7 +59,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const HISTORY_KEY = 'rh_tiktok_user_downloads_v3';
   const DEMO_LINK = 'https://vt.tiktok.com/ZSgQuVgCe/';
   let currentCleanUrl = '';
-  let selectedMode = 'all';
 
   // 1. Theme Switcher (Default Light Mode, Switchable to Dark Mode)
   function applyTheme(theme) {
@@ -92,19 +90,7 @@ document.addEventListener('DOMContentLoaded', () => {
     themeDarkBtn.addEventListener('click', () => applyTheme('dark'));
   }
 
-  // 2. Interactive Output Mode Selector
-  modePills.forEach((pill) => {
-    pill.addEventListener('click', () => {
-      selectedMode = pill.getAttribute('data-mode') || 'all';
-      modePills.forEach((p) => {
-        const active = p === pill;
-        p.classList.toggle('active', active);
-        p.setAttribute('aria-pressed', String(active));
-      });
-    });
-  });
-
-  // 3. Clean String & Number Formatting
+  // 2. Clean String & Number Formatting
   function cleanLabel(str, fallback = 'TikTok Media') {
     if (!str) return fallback;
     const stripped = String(str)
@@ -125,10 +111,14 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
-  // 4. Input Clear Button Visibility
+  // 3. Input Clear & Paste Toggle State
   function syncInputState() {
+    const hasText = dockUrl.value.trim().length > 0;
     if (clearInputBtn) {
-      clearInputBtn.style.display = dockUrl.value.trim().length > 0 ? 'inline-flex' : 'none';
+      clearInputBtn.style.display = hasText ? 'inline-flex' : 'none';
+    }
+    if (pasteBtn) {
+      pasteBtn.style.display = hasText ? 'none' : 'inline-flex';
     }
   }
 
@@ -158,7 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 5. Load Live Edge Health Telemetry
+  // 4. Load Live Edge Health Telemetry
   async function loadEdgeStats() {
     try {
       const res = await fetch('/health');
@@ -175,7 +165,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadEdgeStats();
 
-  // 6. User's Own Session History (Only shown when user has downloaded something)
+  // 5. User's Own Session History (Only shown when user has downloaded something)
   function getHistory() {
     try {
       const raw = localStorage.getItem(HISTORY_KEY);
@@ -258,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 7. Video Player Transport Controls
+  // 6. Video Player Transport Controls
   if (playerTrigger && mediaVideo) {
     playerTrigger.addEventListener('click', (e) => {
       if (e.target.closest('#muteBtn')) return;
@@ -302,7 +292,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 8. Paste Clipboard & Sample Link Buttons
+  // 7. Paste Clipboard & Sample Link Buttons
   if (pasteBtn) {
     pasteBtn.addEventListener('click', async () => {
       try {
@@ -313,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
             syncInputState();
             if (pasteBtnLabel) pasteBtnLabel.textContent = 'Pasted';
             setTimeout(() => {
-              if (pasteBtnLabel) pasteBtnLabel.textContent = 'Paste Link';
+              if (pasteBtnLabel) pasteBtnLabel.textContent = 'Paste';
             }, 1200);
             runExtraction(dockUrl.value);
           } else {
@@ -336,7 +326,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 9. Copy Clean Link Button
+  // 8. Copy Clean Link Button
   if (btnCopyLink) {
     btnCopyLink.addEventListener('click', async () => {
       if (!currentCleanUrl) return;
@@ -350,7 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // 10. Core Extraction Handler
+  // 9. Core Extraction Handler
   async function runExtraction(rawUrl) {
     const url = (rawUrl || '').trim();
     if (!url) {
@@ -431,7 +421,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetVid = data.downloads.hd_video || data.downloads.fast_video;
         const fallbackVid = data.downloads.fast_video || '';
         btnHdVideo.href = `/api/download?url=${encodeURIComponent(targetVid)}&fallback=${encodeURIComponent(fallbackVid)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnHdVideo.style.display = selectedMode === 'audio' ? 'none' : 'flex';
+        btnHdVideo.style.display = 'flex';
         videoSubLabel.textContent = `Original MP4 · H.264 Stream${sizeMb}`;
       } else {
         btnHdVideo.style.display = 'none';
@@ -439,7 +429,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (data.downloads?.audio) {
         btnAudioMp3.href = `/api/download?url=${encodeURIComponent(data.downloads.audio)}&filename=${encodeURIComponent(audioFilename)}`;
-        btnAudioMp3.style.display = selectedMode === 'video' ? 'none' : 'flex';
+        btnAudioMp3.style.display = 'flex';
       } else {
         btnAudioMp3.style.display = 'none';
       }
@@ -454,7 +444,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       inspectorCard.style.display = 'flex';
-      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
       saveToHistory({
         id: String(data.id || Date.now()),
@@ -480,4 +470,6 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault();
     runExtraction(dockUrl.value);
   });
+
+  syncInputState();
 });

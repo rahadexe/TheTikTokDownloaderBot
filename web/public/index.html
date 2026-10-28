@@ -29,23 +29,23 @@
         <div class="header-controls">
           <!-- Segmented Light / Dark Theme Switcher -->
           <div class="theme-switcher" role="group" aria-label="Theme mode">
-            <button type="button" id="themeLightBtn" class="theme-btn active" aria-pressed="true">
+            <button type="button" id="themeLightBtn" class="theme-btn active" aria-pressed="true" aria-label="Light mode">
               <svg class="theme-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
                 <path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
               </svg>
-              <span>Light</span>
+              <span class="theme-label">Light</span>
             </button>
-            <button type="button" id="themeDarkBtn" class="theme-btn" aria-pressed="false">
+            <button type="button" id="themeDarkBtn" class="theme-btn" aria-pressed="false" aria-label="Dark mode">
               <svg class="theme-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M13.2 9.8A5.5 5.5 0 0 1 6.2 2.8a5.5 5.5 0 1 0 7 7Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
               </svg>
-              <span>Dark</span>
+              <span class="theme-label">Dark</span>
             </button>
           </div>
 
-          <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-telegram-nav">
-            <span>Telegram Bot</span>
+          <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-telegram-nav" aria-label="Telegram Bot">
+            <span class="nav-label">Telegram Bot</span>
             <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4.5 11.5L11.5 4.5M11.5 4.5H5.5M11.5 4.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -56,62 +56,67 @@
       <!-- Main Workspace Body -->
       <main class="main-content">
 
-        <!-- Hero & 2-Tier Command Composer -->
+        <!-- Hero & Modern Command Composer -->
         <section class="composer-section" aria-labelledby="heroHeading">
           <div class="hero-header">
             <h1 id="heroHeading" class="hero-title">Watermark-Free TikTok Downloader</h1>
             <p class="hero-subtitle">Paste any TikTok video, short link, or photo carousel below to save original H.264 MP4 streams or extract MP3 audio.</p>
           </div>
 
-          <form id="extractForm" class="composer-box" novalidate>
-            <div class="composer-input-row">
-              <svg class="input-lead-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <form id="extractForm" class="composer-card" novalidate>
+            <!-- 1. Sleek Integrated Input Well -->
+            <div class="input-well">
+              <svg class="input-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M8.5 11.5L11.5 8.5M7 14L5.6 15.4C4.2 16.8 2 16.8 0.6 15.4C-0.8 14 -0.8 11.8 0.6 10.4L3.2 7.8M13 6L14.4 4.6C15.8 3.2 18 3.2 19.4 4.6C20.8 6 20.8 8.2 19.4 9.6L16.8 12.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
               </svg>
               <input
                 type="text"
                 id="dockUrl"
                 class="composer-input"
-                placeholder="Paste TikTok video or photo link..."
+                placeholder="Paste TikTok link here..."
                 aria-label="TikTok video or photo link"
                 autocomplete="off"
                 spellcheck="false"
               >
-              <button type="button" id="clearInputBtn" class="btn-clear-input" style="display: none;" aria-label="Clear link">
-                Clear
-              </button>
-            </div>
-
-            <div class="composer-toolbar">
-              <div class="toolbar-left">
-                <button type="button" id="pasteBtn" class="btn-secondary-action">
-                  <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <div class="input-actions">
+                <button type="button" id="pasteBtn" class="btn-input-paste" aria-label="Paste link from clipboard">
+                  <svg class="icon-xs" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <rect x="4.5" y="3.5" width="8" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
                     <path d="M3 11.5V3C3 2.2 3.7 1.5 4.5 1.5H10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
                   </svg>
-                  <span id="pasteBtnLabel">Paste Link</span>
+                  <span id="pasteBtnLabel">Paste</span>
                 </button>
-
-                <button type="button" id="sampleBtn" class="btn-secondary-action">
-                  <span>Try Sample</span>
-                </button>
-
-                <div class="mode-selector" role="group" aria-label="Output preference">
-                  <button type="button" class="mode-pill active" data-mode="all" aria-pressed="true">All Formats</button>
-                  <button type="button" class="mode-pill" data-mode="video" aria-pressed="false">MP4 Video</button>
-                  <button type="button" class="mode-pill" data-mode="audio" aria-pressed="false">MP3 Audio</button>
-                </div>
-              </div>
-
-              <div class="toolbar-right">
-                <button type="submit" id="extractBtn" class="btn-primary-submit">
-                  <span class="btn-text">Download Media</span>
-                  <span class="btn-spinner" style="display: none;">Extracting...</span>
-                  <svg class="icon-sm btn-arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M3.5 8H12.5M12.5 8L8.5 4M12.5 8L8.5 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <button type="button" id="clearInputBtn" class="btn-input-clear" style="display: none;" aria-label="Clear input">
+                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
                   </svg>
                 </button>
               </div>
+            </div>
+
+            <!-- 2. Clean Action Row with Spacing & Touch Ergonomics -->
+            <div class="composer-action-row">
+              <div class="quick-helpers">
+                <button type="button" id="sampleBtn" class="btn-sample-hint">
+                  <svg class="icon-xs" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M8 1.5L9.6 5.8L14 6.2L10.7 9.1L11.6 13.5L8 11.2L4.4 13.5L5.3 9.1L2 6.2L6.4 5.8L8 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  </svg>
+                  <span>Try sample link</span>
+                </button>
+                <div class="format-badges" aria-label="Supported output formats">
+                  <span class="chip-item">MP4 HD</span>
+                  <span class="chip-item">MP3 Audio</span>
+                  <span class="chip-item">Slides</span>
+                </div>
+              </div>
+
+              <button type="submit" id="extractBtn" class="btn-primary-submit">
+                <span class="btn-text">Download Media</span>
+                <span class="btn-spinner" style="display: none;">Extracting...</span>
+                <svg class="icon-sm btn-arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8H12.5M12.5 8L8.5 4M12.5 8L8.5 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
             </div>
           </form>
 
@@ -125,19 +130,26 @@
         <!-- Dynamic Resolved Media Sheet (HIDDEN on initial load — appears ONLY after user submits a link!) -->
         <section id="inspectorCard" class="resolved-card" aria-labelledby="resolvedHeading" style="display: none;">
           <div class="resolved-header">
-            <div class="resolved-title-group">
+            <div class="resolved-head-row">
               <h2 id="resolvedHeading" class="section-heading">Extracted Media Ready</h2>
+              <button type="button" id="resetInspectorBtn" class="btn-reset-inspector" aria-label="Download another video">
+                <svg class="icon-xs" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M13.5 8C13.5 11.0376 11.0376 13.5 8 13.5C4.96243 13.5 2.5 11.0376 2.5 8C2.5 4.96243 4.96243 2.5 8 2.5C9.8 2.5 11.4 3.4 12.3 4.7M13.5 2.5V5H11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span>New Download</span>
+              </button>
+            </div>
+            <div class="resolved-badges">
               <span id="mediaTypeBadge" class="badge-success">No Watermark · MP4</span>
               <span id="mediaIdBadge" class="spec-chip num">#Resolved</span>
             </div>
-            <button type="button" id="resetInspectorBtn" class="btn-secondary-sm">Download Another</button>
           </div>
 
           <div class="resolved-grid">
             <!-- Left: 9:16 Video Player Preview -->
             <div class="preview-column" id="videoPreviewCol">
               <div class="video-frame" id="playerTrigger">
-                <video id="mediaVideo" playsinline preload="metadata"></video>
+                <video id="mediaVideo" playsinline preload="metadata" poster="sample-cover.jpg"></video>
 
                 <div class="video-top-overlay">
                   <span id="resBadge" class="video-tag">HD · H.264</span>
