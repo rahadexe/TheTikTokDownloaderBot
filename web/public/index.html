@@ -1,310 +1,342 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>RH TikTok Studio — Watermark-Free Media Extractor</title>
-  <meta name="description" content="Watermark-free TikTok H.264 MP4 video, original MP3 audio, and photo carousel extractor powered by Cloudflare Edge.">
+  <title>RH TikTok Studio — Clean Watermark-Free Downloader</title>
+  <meta name="description" content="Download watermark-free TikTok HD MP4 videos, original MP3 audio tracks, and photo slideshows.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- Top Ruled Studio Bar (64px desktop, 54px mobile) -->
-  <header class="top-bar">
-    <div class="top-bar-inner">
-      <div class="brand-cluster">
-        <span class="brand-mark" aria-hidden="true">RH</span>
-        <span class="brand-name">TikTok Studio</span>
-        <span class="status-pill">
-          <span class="status-dot" aria-hidden="true"></span>
-          <span id="edgeStatusText">Edge Online</span>
-        </span>
-      </div>
+  <div class="app-frame">
+    <div class="workspace-sheet">
 
-      <nav class="top-nav" aria-label="Workspace navigation">
-        <a href="https://t.me/RHToolsOfficial" target="_blank" rel="noopener" class="nav-link active">@RHToolsOfficial</a>
-        <span class="top-divider" aria-hidden="true"></span>
-        <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-pill-outline">
-          <span>Telegram Bot</span>
-          <svg class="icon-inline" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M4.5 11.5L11.5 4.5M11.5 4.5H5.5M11.5 4.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </a>
-      </nav>
-    </div>
-  </header>
-
-  <!-- Main Studio Canvas -->
-  <main class="studio-canvas">
-
-    <!-- Title Row + Command Dock -->
-    <section class="command-section" aria-labelledby="pageTitle">
-      <div class="title-row">
-        <div class="title-copy">
-          <div class="title-headline-line">
-            <h1 id="pageTitle" class="page-title">TikTok Media Extractor</h1>
-            <span id="statusNotice" class="freshness-stamp">Ready · Triple-Engine Edge</span>
-          </div>
-          <p class="page-subtitle">Paste any TikTok video, short link, or photo slideshow to extract original H.264 MP4 streams and MP3 audio.</p>
-        </div>
-      </div>
-
-      <!-- Grok-Inspired Precision Command Dock -->
-      <form id="extractForm" class="command-dock" novalidate>
-        <div class="dock-input-well">
-          <svg class="dock-link-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M6.8 9.2L9.2 6.8M5.5 11.5L4.4 12.6C3.3 13.7 1.5 13.7 0.4 12.6C-0.7 11.5 -0.7 9.7 0.4 8.6L2.5 6.5M10.5 4.5L11.6 3.4C12.7 2.3 14.5 2.3 15.6 3.4C16.7 4.5 16.7 6.3 15.6 7.4L13.5 9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-          <input
-            type="text"
-            id="dockUrl"
-            class="dock-input"
-            placeholder="Paste TikTok video or photo link..."
-            aria-label="TikTok URL"
-            autocomplete="off"
-            spellcheck="false"
-          >
-          <div class="dock-inline-actions">
-            <button type="button" id="pasteBtn" class="btn-chip">Paste</button>
-            <button type="button" id="sampleBtn" class="btn-chip">Sample</button>
-          </div>
-        </div>
-        <button type="submit" id="extractBtn" class="btn-primary-pill">
-          <span class="btn-text">Extract Media</span>
-          <span class="btn-spinner" style="display: none;">Resolving...</span>
-        </button>
-      </form>
-
-      <!-- Inline Error Banner (hidden unless error occurs) -->
-      <div id="errorBanner" class="error-strip" role="alert" style="display: none;">
-        <span id="errorText" class="error-msg">Could not resolve TikTok link. Check that the video is public.</span>
-        <button type="button" id="retryBtn" class="error-retry">Retry sample</button>
-      </div>
-    </section>
-
-    <!-- Two-Column Studio Workspace Grid -->
-    <div class="workspace-grid">
-
-      <!-- Left Column: Active Media Inspector & Export Stage -->
-      <section id="inspectorCard" class="studio-card inspector-card" aria-labelledby="inspectorHeading">
-        <div class="card-header">
-          <h2 id="inspectorHeading" class="section-title">Active Media Inspector</h2>
-          <div class="header-badges">
-            <span id="mediaTypeBadge" class="pill-positive">No Watermark · MP4</span>
-            <span id="mediaIdBadge" class="id-mono num">#76926648</span>
-          </div>
+      <!-- Top Header Bar -->
+      <header class="top-header">
+        <div class="brand-group">
+          <span class="brand-badge" aria-hidden="true">RH</span>
+          <span class="brand-title">TikTok Studio</span>
+          <span class="status-tag">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="edgeBadgeText">Edge Online</span>
+          </span>
         </div>
 
-        <!-- Split Media Stage & Export Controls -->
-        <div class="inspector-body">
+        <div class="header-controls">
+          <!-- Segmented Light / Dark Theme Switcher -->
+          <div class="theme-switcher" role="group" aria-label="Theme mode">
+            <button type="button" id="themeLightBtn" class="theme-btn active" aria-pressed="true">
+              <svg class="theme-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="3.2" stroke="currentColor" stroke-width="1.4"/>
+                <path d="M8 1.5V3M8 13V14.5M1.5 8H3M13 8H14.5M3.4 3.4L4.5 4.5M11.5 11.5L12.6 12.6M12.6 3.4L11.5 4.5M4.5 11.5L3.4 12.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+              <span>Light</span>
+            </button>
+            <button type="button" id="themeDarkBtn" class="theme-btn" aria-pressed="false">
+              <svg class="theme-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M13.2 9.8A5.5 5.5 0 0 1 6.2 2.8a5.5 5.5 0 1 0 7 7Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+              </svg>
+              <span>Dark</span>
+            </button>
+          </div>
 
-          <!-- 9:16 Vertical Video Preview Frame (Edits-inspired) -->
-          <div class="stage-column">
-            <div class="video-stage" id="playerTrigger">
-              <video
-                id="mediaVideo"
-                playsinline
-                preload="metadata"
-                poster="sample-cover.jpg"
-                src="https://www.tikwm.com/video/media/play/7692664817294773512.mp4"
-              ></video>
+          <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-telegram-nav">
+            <span>Telegram Bot</span>
+            <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4.5 11.5L11.5 4.5M11.5 4.5H5.5M11.5 4.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </header>
 
-              <div class="stage-top-bar">
-                <span id="resBadge" class="stage-pill">HD · H.264</span>
-                <button type="button" id="muteBtn" class="stage-icon-btn" aria-label="Toggle mute">
-                  <svg id="iconUnmuted" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M2.5 6H5.5L9.5 2.5V13.5L5.5 10H2.5V6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-                    <path d="M12 5.5C12.9 6.8 12.9 9.2 12 10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <!-- Main Workspace Body -->
+      <main class="main-content">
+
+        <!-- Hero & 2-Tier Command Composer -->
+        <section class="composer-section" aria-labelledby="heroHeading">
+          <div class="hero-header">
+            <h1 id="heroHeading" class="hero-title">Watermark-Free TikTok Downloader</h1>
+            <p class="hero-subtitle">Paste any TikTok video, short link, or photo carousel below to save original H.264 MP4 streams or extract MP3 audio.</p>
+          </div>
+
+          <form id="extractForm" class="composer-box" novalidate>
+            <div class="composer-input-row">
+              <svg class="input-lead-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M8.5 11.5L11.5 8.5M7 14L5.6 15.4C4.2 16.8 2 16.8 0.6 15.4C-0.8 14 -0.8 11.8 0.6 10.4L3.2 7.8M13 6L14.4 4.6C15.8 3.2 18 3.2 19.4 4.6C20.8 6 20.8 8.2 19.4 9.6L16.8 12.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+              <input
+                type="text"
+                id="dockUrl"
+                class="composer-input"
+                placeholder="Paste TikTok video or photo link..."
+                aria-label="TikTok video or photo link"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <button type="button" id="clearInputBtn" class="btn-clear-input" style="display: none;" aria-label="Clear link">
+                Clear
+              </button>
+            </div>
+
+            <div class="composer-toolbar">
+              <div class="toolbar-left">
+                <button type="button" id="pasteBtn" class="btn-secondary-action">
+                  <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="4.5" y="3.5" width="8" height="10" rx="1.5" stroke="currentColor" stroke-width="1.4"/>
+                    <path d="M3 11.5V3C3 2.2 3.7 1.5 4.5 1.5H10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                  <span id="pasteBtnLabel">Paste Link</span>
+                </button>
+
+                <button type="button" id="sampleBtn" class="btn-secondary-action">
+                  <span>Try Sample</span>
+                </button>
+
+                <div class="mode-selector" role="group" aria-label="Output preference">
+                  <button type="button" class="mode-pill active" data-mode="all" aria-pressed="true">All Formats</button>
+                  <button type="button" class="mode-pill" data-mode="video" aria-pressed="false">MP4 Video</button>
+                  <button type="button" class="mode-pill" data-mode="audio" aria-pressed="false">MP3 Audio</button>
+                </div>
+              </div>
+
+              <div class="toolbar-right">
+                <button type="submit" id="extractBtn" class="btn-primary-submit">
+                  <span class="btn-text">Download Media</span>
+                  <span class="btn-spinner" style="display: none;">Extracting...</span>
+                  <svg class="icon-sm btn-arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M3.5 8H12.5M12.5 8L8.5 4M12.5 8L8.5 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
               </div>
+            </div>
+          </form>
 
-              <div class="play-overlay" id="playOverlay">
-                <span class="play-circle" aria-hidden="true">
-                  <svg viewBox="0 0 16 16" fill="none">
-                    <path d="M5 3.5L12.5 8L5 12.5V3.5Z" fill="currentColor"/>
+          <!-- Error Notice Banner (Hidden unless an invalid/private link is submitted) -->
+          <div id="errorBanner" class="error-banner" role="alert" style="display: none;">
+            <span id="errorText" class="error-message">Could not resolve TikTok link. Please check that the video is public and valid.</span>
+            <button type="button" id="dismissErrorBtn" class="btn-error-dismiss">Dismiss</button>
+          </div>
+        </section>
+
+        <!-- Dynamic Resolved Media Sheet (HIDDEN on initial load — appears ONLY after user submits a link!) -->
+        <section id="inspectorCard" class="resolved-card" aria-labelledby="resolvedHeading" style="display: none;">
+          <div class="resolved-header">
+            <div class="resolved-title-group">
+              <h2 id="resolvedHeading" class="section-heading">Extracted Media Ready</h2>
+              <span id="mediaTypeBadge" class="badge-success">No Watermark · MP4</span>
+              <span id="mediaIdBadge" class="spec-chip num">#Resolved</span>
+            </div>
+            <button type="button" id="resetInspectorBtn" class="btn-secondary-sm">Download Another</button>
+          </div>
+
+          <div class="resolved-grid">
+            <!-- Left: 9:16 Video Player Preview -->
+            <div class="preview-column" id="videoPreviewCol">
+              <div class="video-frame" id="playerTrigger">
+                <video id="mediaVideo" playsinline preload="metadata"></video>
+
+                <div class="video-top-overlay">
+                  <span id="resBadge" class="video-tag">HD · H.264</span>
+                  <button type="button" id="muteBtn" class="video-mute-btn" aria-label="Mute or unmute video">
+                    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path d="M2.5 6H5.5L9.5 2.5V13.5L5.5 10H2.5V6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                      <path d="M12 5.5C12.9 6.8 12.9 9.2 12 10.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="play-overlay" id="playOverlay">
+                  <span class="play-button-circle" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" fill="none">
+                      <path d="M5.2 3.5L12.5 8L5.2 12.5V3.5Z" fill="currentColor"/>
+                    </svg>
+                  </span>
+                </div>
+
+                <div class="video-bottom-bar">
+                  <span id="timecodeText" class="timecode-label num">0:00 / 0:00</span>
+                  <div class="progress-rail" aria-hidden="true">
+                    <div id="scrubberFill" class="progress-fill"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Right: Metadata, Download Actions & Engagement Stats -->
+            <div class="action-column">
+              <div class="creator-card">
+                <div class="creator-profile">
+                  <img id="creatorAvatar" src="sample-avatar.jpg" alt="Creator avatar" class="creator-avatar">
+                  <div class="creator-names">
+                    <span id="creatorName" class="creator-name">Creator</span>
+                    <span id="creatorHandle" class="creator-handle">@username</span>
+                  </div>
+                  <span id="durationTag" class="spec-chip num">HD Stream</span>
+                </div>
+
+                <p id="mediaCaption" class="media-caption"></p>
+
+                <div class="sound-row">
+                  <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M6 12.5V3.5L13 2V11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="4.2" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.4"/>
+                    <circle cx="11.2" cy="11" r="1.8" stroke="currentColor" stroke-width="1.4"/>
                   </svg>
-                </span>
-              </div>
-
-              <div class="stage-transport">
-                <span id="timecodeText" class="timecode num">0:00 / 0:59</span>
-                <div class="scrubber-track" aria-hidden="true">
-                  <div id="scrubberFill" class="scrubber-fill"></div>
+                  <span id="audioTitle" class="sound-title">Original Sound</span>
                 </div>
               </div>
-            </div>
-          </div>
 
-          <!-- Right Details + Tactile Export Stack (ElevenLabs-inspired) -->
-          <div class="details-column">
-            <div class="info-group">
-              <div class="creator-row">
-                <img id="creatorAvatar" src="sample-avatar.jpg" alt="Creator profile avatar" class="creator-avatar">
-                <div class="creator-meta">
-                  <span id="creatorName" class="creator-name">S Md Rasel</span>
-                  <span id="creatorHandle" class="creator-handle">@smdrasel54</span>
+              <!-- Photo Slideshow Grid (Only shown when link is a photo carousel) -->
+              <div id="photoGridWrap" class="photo-carousel-block" style="display: none;">
+                <div class="photo-carousel-head">
+                  <span class="photo-carousel-label">Photo Carousel Slides</span>
+                  <span id="photoCountLabel" class="spec-chip num">0 slides</span>
                 </div>
-                <span id="durationTag" class="duration-chip num">59s · 3.9 MB</span>
+                <div id="photoGrid" class="photo-grid"></div>
               </div>
 
-              <p id="mediaCaption" class="media-caption">Men peak level ego — original vertical H.264 stream extracted without platform watermark.</p>
+              <!-- Primary & Secondary Download Buttons with Proper Spacing -->
+              <div class="download-actions">
+                <a id="btnHdVideo" href="#" class="btn-download-primary" download>
+                  <span class="dl-btn-copy">
+                    <span class="dl-btn-title">Download HD Video (No Watermark)</span>
+                    <span id="videoSubLabel" class="dl-btn-sub num">Original MP4 · Direct H.264 Stream</span>
+                  </span>
+                  <svg class="icon-md" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                    <path d="M9 3V12M9 12L5 8M9 12L13 8M3.5 15H14.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </a>
 
-              <div class="audio-strip">
-                <svg class="audio-svg" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M6 12.5V3.5L13 2V11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-                  <circle cx="4.2" cy="12.5" r="1.8" stroke="currentColor" stroke-width="1.4"/>
-                  <circle cx="11.2" cy="11" r="1.8" stroke="currentColor" stroke-width="1.4"/>
-                </svg>
-                <span id="audioTitle" class="audio-name">original sound - smdrasel54</span>
+                <a id="btnAudioMp3" href="#" class="btn-download-secondary" download>
+                  <span class="dl-btn-copy">
+                    <span class="dl-btn-title">Extract Audio Track (MP3)</span>
+                    <span class="dl-btn-sub">Original Sound · High Bitrate Audio</span>
+                  </span>
+                  <svg class="icon-md" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+                    <path d="M9 3V12M9 12L5 8M9 12L13 8M3.5 15H14.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </a>
+
+                <div class="utility-button-row">
+                  <a id="btnFastServer" href="#" class="btn-utility" download>Fast Mirror (SD)</a>
+                  <a id="btnCover" href="#" target="_blank" rel="noopener" class="btn-utility">Save Thumbnail</a>
+                  <button type="button" id="btnCopyLink" class="btn-utility">Copy Clean Link</button>
+                </div>
               </div>
-            </div>
 
-            <!-- Photo Carousel Grid (shown when a photo slideshow link is resolved) -->
-            <div id="photoGridWrap" class="photo-grid-wrap" style="display: none;">
-              <div class="photo-grid-header">
-                <span class="photo-grid-title">Carousel Slides</span>
-                <span id="photoCountLabel" class="photo-grid-count num">0 slides</span>
-              </div>
-              <div id="photoGrid" class="photo-grid"></div>
-            </div>
-
-            <!-- Export Action Buttons -->
-            <div class="export-stack">
-              <a
-                id="btnHdVideo"
-                href="/api/download?url=https%3A%2F%2Fwww.tikwm.com%2Fvideo%2Fmedia%2Fplay%2F7692664817294773512.mp4&filename=tiktok_7692664817294773512_clean.mp4"
-                class="btn-export-primary"
-                download
-              >
-                <span class="export-copy">
-                  <span class="export-main">Download Video (No Watermark)</span>
-                  <span id="videoSubLabel" class="export-sub num">Original MP4 · H.264 Stream</span>
-                </span>
-                <svg class="export-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M8 2.5V10.5M8 10.5L4.5 7M8 10.5L11.5 7M3 13.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </a>
-
-              <a
-                id="btnAudioMp3"
-                href="https://www.tikwm.com/video/media/play/7692664817294773512.mp4"
-                class="btn-export-secondary"
-                download
-              >
-                <span class="export-copy">
-                  <span class="export-main">Extract Audio Track (MP3)</span>
-                  <span class="export-sub">Original Sound · Direct Audio</span>
-                </span>
-                <svg class="export-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M8 2.5V10.5M8 10.5L4.5 7M8 10.5L11.5 7M3 13.5H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </a>
-
-              <div class="utility-links">
-                <a
-                  id="btnFastServer"
-                  href="/api/download?url=https%3A%2F%2Fwww.tikwm.com%2Fvideo%2Fmedia%2Fplay%2F7692664817294773512.mp4&filename=tiktok_7692664817294773512_clean.mp4"
-                  class="util-btn"
-                  download
-                >Fast Mirror</a>
-                <a id="btnCover" href="sample-cover.jpg" target="_blank" rel="noopener" class="util-btn">Save Cover</a>
-                <a id="btnCopyLink" href="#copy" class="util-btn">Copy URL</a>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- Divided KPI Strip (Views, Likes, Comments, Shares) -->
-        <div class="kpi-strip" role="region" aria-label="Media engagement metrics">
-          <div class="kpi-cell">
-            <span class="kpi-label">Views</span>
-            <span id="statViews" class="kpi-value num">568,846</span>
-          </div>
-          <div class="kpi-cell">
-            <span class="kpi-label">Likes</span>
-            <span id="statLikes" class="kpi-value num">31,177</span>
-          </div>
-          <div class="kpi-cell">
-            <span class="kpi-label">Comments</span>
-            <span id="statComments" class="kpi-value num">246</span>
-          </div>
-          <div class="kpi-cell">
-            <span class="kpi-label">Shares</span>
-            <span id="statShares" class="kpi-value num">775</span>
-          </div>
-        </div>
-      </section>
-
-      <!-- Right Column: Recent Extractions Queue & Edge Pipeline Specs -->
-      <aside class="side-column" aria-label="Recent extractions and edge status">
-
-        <!-- Card 1: Session Extraction Queue -->
-        <section class="studio-card queue-card" aria-labelledby="queueHeading">
-          <div class="card-header">
-            <h2 id="queueHeading" class="section-title">Recent Extractions</h2>
-            <button type="button" id="clearHistoryBtn" class="text-action">Reset</button>
-          </div>
-
-          <div id="recentList" class="recent-list" role="list">
-            <div class="recent-row" role="listitem" data-url="https://vt.tiktok.com/ZSgQuVgCe/">
-              <img src="sample-cover.jpg" alt="Clip thumbnail" class="recent-thumb">
-              <div class="recent-info">
-                <span class="recent-title">Men peak level ego</span>
-                <span class="recent-sub">@smdrasel54 · MP4 + MP3</span>
-              </div>
-              <div class="recent-right">
-                <span class="recent-dur num">0:59</span>
-                <button type="button" class="row-load-btn" data-url="https://vt.tiktok.com/ZSgQuVgCe/">Inspect</button>
+              <!-- Divided Engagement Strip -->
+              <div class="stats-strip" role="region" aria-label="Video engagement counts">
+                <div class="stat-item">
+                  <span class="stat-label">Views</span>
+                  <span id="statViews" class="stat-number num">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Likes</span>
+                  <span id="statLikes" class="stat-number num">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Comments</span>
+                  <span id="statComments" class="stat-number num">0</span>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Shares</span>
+                  <span id="statShares" class="stat-number num">0</span>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        <!-- Card 2: Edge Engine & Telegram Bot Telemetry -->
-        <section class="studio-card telemetry-card" aria-labelledby="telemetryHeading">
-          <div class="card-header">
-            <h2 id="telemetryHeading" class="section-title">Cloudflare Edge Pipeline</h2>
-            <span class="pill-positive">Active</span>
+        <!-- User's Own Session History (Hidden until the user downloads at least 1 item) -->
+        <section id="recentSection" class="recent-section" aria-labelledby="recentHeading" style="display: none;">
+          <div class="section-bar">
+            <h2 id="recentHeading" class="section-heading">Your Recent Downloads</h2>
+            <button type="button" id="clearHistoryBtn" class="btn-text-quiet">Clear History</button>
+          </div>
+          <div id="recentList" class="recent-grid" role="list"></div>
+        </section>
+
+        <!-- Studio Capabilities & Telegram Bot Integration (Clean Resting Workspace) -->
+        <section class="capabilities-section" aria-labelledby="capabilitiesHeading">
+          <div class="section-bar">
+            <h2 id="capabilitiesHeading" class="section-heading">Extraction Capabilities</h2>
+            <span id="edgeTelemetryLabel" class="section-note num">Cloudflare Edge · 3 Engines Active</span>
           </div>
 
-          <div class="kv-well">
-            <div class="kv-row">
-              <span class="kv-key">Extraction Engines</span>
-              <span class="kv-val num">3 Active</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Telegram Hash Cache</span>
-              <span id="kvCacheCount" class="kv-val num">30-Day TTL</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Max Binary Stream</span>
-              <span class="kv-val num">49.0 MB</span>
-            </div>
-            <div class="kv-row">
-              <span class="kv-key">Supported Formats</span>
-              <span class="kv-val">Video, Audio, Photos</span>
-            </div>
+          <div class="capabilities-grid">
+            <article class="capability-card">
+              <div class="cap-body">
+                <div class="cap-top">
+                  <h3 class="cap-title">Original H.264 Video</h3>
+                  <span class="spec-chip num">MP4 · 1080p</span>
+                </div>
+                <p class="cap-desc">Fetches direct source video streams without platform watermarks, username overlays, or quality compression.</p>
+              </div>
+              <div class="cap-footer">
+                <span class="cap-spec">Codec: AVC1 / H.264</span>
+                <span class="cap-spec num">Up to 49 MB</span>
+              </div>
+            </article>
+
+            <article class="capability-card">
+              <div class="cap-body">
+                <div class="cap-top">
+                  <h3 class="cap-title">Original Audio &amp; Slides</h3>
+                  <span class="spec-chip">MP3 + JPG</span>
+                </div>
+                <p class="cap-desc">Extract standalone MP3 audio tracks or save full multi-photo TikTok carousels in a single click.</p>
+              </div>
+              <div class="cap-footer">
+                <span class="cap-spec">Audio: Direct Stream</span>
+                <span class="cap-spec">Albums: Multi-Slide</span>
+              </div>
+            </article>
+
+            <article class="capability-card capability-card-highlight">
+              <div class="cap-body">
+                <div class="cap-top">
+                  <h3 class="cap-title">Instant Telegram Bot</h3>
+                  <span class="badge-success num">0.1s Cache</span>
+                </div>
+                <p class="cap-desc">Send any TikTok link directly to @TheTikTokDownloaderBot in Telegram for instant chat delivery.</p>
+              </div>
+              <div class="cap-footer">
+                <span class="cap-spec">@TheTikTokDownloaderBot</span>
+                <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="cap-inline-cta">
+                  <span>Open Bot</span>
+                  <svg class="icon-sm" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M4.5 11.5L11.5 4.5M11.5 4.5H5.5M11.5 4.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </a>
+              </div>
+            </article>
           </div>
 
-          <div class="bot-callout">
-            <div class="bot-callout-copy">
-              <span class="bot-callout-title">Instant Telegram Delivery</span>
-              <span class="bot-callout-sub">Forward any link to @TheTikTokDownloaderBot for cached 0.1s Telegram delivery.</span>
+          <!-- Supported Formats & Channel Footer Bar -->
+          <div class="formats-bar">
+            <div class="formats-left">
+              <span class="formats-label">Supported links</span>
+              <div class="formats-pills">
+                <span class="url-pattern">vt.tiktok.com/*</span>
+                <span class="url-pattern">vm.tiktok.com/*</span>
+                <span class="url-pattern">tiktok.com/@user/video/*</span>
+                <span class="url-pattern">tiktok.com/@user/photo/*</span>
+              </div>
             </div>
-            <a href="https://t.me/TheTikTokDownloaderBot" target="_blank" rel="noopener" class="btn-bot-open">Open</a>
+            <div class="formats-right">
+              <a href="https://t.me/RHToolsOfficial" target="_blank" rel="noopener" class="channel-credit">Updates: @RHToolsOfficial</a>
+            </div>
           </div>
         </section>
 
-      </aside>
+      </main>
 
     </div>
-
-  </main>
+  </div>
 
   <script src="app.js"></script>
 </body>

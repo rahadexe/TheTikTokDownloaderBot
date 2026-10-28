@@ -1,15 +1,23 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const htmlRoot = document.documentElement;
+  const themeLightBtn = document.getElementById('themeLightBtn');
+  const themeDarkBtn = document.getElementById('themeDarkBtn');
+
   const extractForm = document.getElementById('extractForm');
   const dockUrl = document.getElementById('dockUrl');
+  const clearInputBtn = document.getElementById('clearInputBtn');
   const pasteBtn = document.getElementById('pasteBtn');
+  const pasteBtnLabel = document.getElementById('pasteBtnLabel');
   const sampleBtn = document.getElementById('sampleBtn');
+  const modePills = document.querySelectorAll('.mode-pill');
   const extractBtn = document.getElementById('extractBtn');
-  const statusNotice = document.getElementById('statusNotice');
+
   const errorBanner = document.getElementById('errorBanner');
   const errorText = document.getElementById('errorText');
-  const retryBtn = document.getElementById('retryBtn');
+  const dismissErrorBtn = document.getElementById('dismissErrorBtn');
 
   const inspectorCard = document.getElementById('inspectorCard');
+  const resetInspectorBtn = document.getElementById('resetInspectorBtn');
   const mediaTypeBadge = document.getElementById('mediaTypeBadge');
   const mediaIdBadge = document.getElementById('mediaIdBadge');
 
@@ -43,26 +51,60 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCover = document.getElementById('btnCover');
   const btnCopyLink = document.getElementById('btnCopyLink');
 
+  const recentSection = document.getElementById('recentSection');
   const recentList = document.getElementById('recentList');
   const clearHistoryBtn = document.getElementById('clearHistoryBtn');
-  const kvCacheCount = document.getElementById('kvCacheCount');
+  const edgeTelemetryLabel = document.getElementById('edgeTelemetryLabel');
 
-  const STORAGE_KEY = 'rh_tiktok_studio_recent_v2';
-  const DEFAULT_SAMPLE_URL = 'https://vt.tiktok.com/ZSgQuVgCe/';
-  let currentCleanUrl = DEFAULT_SAMPLE_URL;
+  const THEME_KEY = 'rh_tiktok_studio_theme';
+  const HISTORY_KEY = 'rh_tiktok_user_downloads_v3';
+  const DEMO_LINK = 'https://vt.tiktok.com/ZSgQuVgCe/';
+  let currentCleanUrl = '';
+  let selectedMode = 'all';
 
-  const DEFAULT_RECENT = [
-    {
-      id: '7692664817294773512',
-      url: DEFAULT_SAMPLE_URL,
-      title: 'Men peak level ego',
-      handle: '@smdrasel54',
-      duration: 59,
-      cover: 'sample-cover.jpg'
+  // 1. Theme Switcher (Default Light Mode, Switchable to Dark Mode)
+  function applyTheme(theme) {
+    const mode = theme === 'dark' ? 'dark' : 'light';
+    htmlRoot.setAttribute('data-theme', mode);
+    if (themeLightBtn && themeDarkBtn) {
+      themeLightBtn.classList.toggle('active', mode === 'light');
+      themeLightBtn.setAttribute('aria-pressed', String(mode === 'light'));
+      themeDarkBtn.classList.toggle('active', mode === 'dark');
+      themeDarkBtn.setAttribute('aria-pressed', String(mode === 'dark'));
     }
-  ];
+    try {
+      localStorage.setItem(THEME_KEY, mode);
+    } catch {}
+  }
 
-  // Strip emojis from dynamic text when needed for clean UI labels
+  try {
+    const savedTheme = localStorage.getItem(THEME_KEY);
+    const initialTheme = savedTheme || htmlRoot.getAttribute('data-theme') || 'light';
+    applyTheme(initialTheme);
+  } catch {
+    applyTheme('light');
+  }
+
+  if (themeLightBtn) {
+    themeLightBtn.addEventListener('click', () => applyTheme('light'));
+  }
+  if (themeDarkBtn) {
+    themeDarkBtn.addEventListener('click', () => applyTheme('dark'));
+  }
+
+  // 2. Interactive Output Mode Selector
+  modePills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      selectedMode = pill.getAttribute('data-mode') || 'all';
+      modePills.forEach((p) => {
+        const active = p === pill;
+        p.classList.toggle('active', active);
+        p.setAttribute('aria-pressed', String(active));
+      });
+    });
+  });
+
+  // 3. Clean String & Number Formatting
   function cleanLabel(str, fallback = 'TikTok Media') {
     if (!str) return fallback;
     const stripped = String(str)
@@ -73,8 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function formatNumber(n) {
-    const val = Number(n || 0);
-    return val.toLocaleString('en-US');
+    return Number(n || 0).toLocaleString('en-US');
   }
 
   function formatTimecode(sec) {
@@ -84,29 +125,65 @@ document.addEventListener('DOMContentLoaded', () => {
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   }
 
-  // Load live edge health stats quietly
+  // 4. Input Clear Button Visibility
+  function syncInputState() {
+    if (clearInputBtn) {
+      clearInputBtn.style.display = dockUrl.value.trim().length > 0 ? 'inline-flex' : 'none';
+    }
+  }
+
+  dockUrl.addEventListener('input', syncInputState);
+
+  if (clearInputBtn) {
+    clearInputBtn.addEventListener('click', () => {
+      dockUrl.value = '';
+      syncInputState();
+      dockUrl.focus();
+    });
+  }
+
+  if (dismissErrorBtn) {
+    dismissErrorBtn.addEventListener('click', () => {
+      errorBanner.style.display = 'none';
+    });
+  }
+
+  if (resetInspectorBtn) {
+    resetInspectorBtn.addEventListener('click', () => {
+      if (mediaVideo) mediaVideo.pause();
+      inspectorCard.style.display = 'none';
+      dockUrl.value = '';
+      syncInputState();
+      dockUrl.focus();
+    });
+  }
+
+  // 5. Load Live Edge Health Telemetry
   async function loadEdgeStats() {
     try {
       const res = await fetch('/health');
       if (!res.ok) return;
       const json = await res.json();
-      if (json?.stats && kvCacheCount) {
+      if (json?.stats && edgeTelemetryLabel) {
         const cached = Number(json.stats.cachedVideos || 0);
-        kvCacheCount.textContent = cached > 0 ? `${formatNumber(cached)} Cached · 30d TTL` : '30-Day Edge TTL';
+        edgeTelemetryLabel.textContent =
+          cached > 0
+            ? `Cloudflare Edge · ${formatNumber(cached)} Cached · 3 Engines`
+            : 'Cloudflare Edge · 3 Engines Active';
       }
     } catch {}
   }
   loadEdgeStats();
 
-  // Recent History Management
+  // 6. User's Own Session History (Only shown when user has downloaded something)
   function getHistory() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return DEFAULT_RECENT;
+      const raw = localStorage.getItem(HISTORY_KEY);
+      if (!raw) return [];
       const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_RECENT;
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return DEFAULT_RECENT;
+      return [];
     }
   }
 
@@ -114,61 +191,59 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const existing = getHistory().filter((x) => x.id !== item.id);
       const updated = [item, ...existing].slice(0, 3);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
       renderHistory(updated);
     } catch {}
   }
 
   function renderHistory(items) {
-    if (!recentList) return;
+    if (!recentSection || !recentList) return;
+    if (!Array.isArray(items) || items.length === 0) {
+      recentSection.style.display = 'none';
+      recentList.innerHTML = '';
+      return;
+    }
+
+    recentSection.style.display = 'flex';
     recentList.innerHTML = '';
     for (const item of items.slice(0, 3)) {
-      const row = document.createElement('div');
-      row.className = 'recent-row';
-      row.setAttribute('role', 'listitem');
+      const card = document.createElement('div');
+      card.className = 'recent-item';
+      card.setAttribute('role', 'listitem');
 
       const img = document.createElement('img');
       img.className = 'recent-thumb';
       img.src = item.cover || 'sample-cover.jpg';
-      img.alt = 'Clip thumbnail';
+      img.alt = 'Downloaded video thumbnail';
 
       const info = document.createElement('div');
       info.className = 'recent-info';
 
-      const t = document.createElement('span');
-      t.className = 'recent-title';
-      t.textContent = cleanLabel(item.title, 'TikTok Video');
+      const title = document.createElement('span');
+      title.className = 'recent-title';
+      title.textContent = cleanLabel(item.title, 'TikTok Video');
 
-      const s = document.createElement('span');
-      s.className = 'recent-sub';
-      s.textContent = `${item.handle || '@tiktok'} · MP4 + MP3`;
+      const sub = document.createElement('span');
+      sub.className = 'recent-sub';
+      sub.textContent = `${item.handle || '@tiktok'} · ${formatTimecode(item.duration || 0)}`;
 
-      info.appendChild(t);
-      info.appendChild(s);
+      info.appendChild(title);
+      info.appendChild(sub);
 
-      const right = document.createElement('div');
-      right.className = 'recent-right';
-
-      const dur = document.createElement('span');
-      dur.className = 'recent-dur num';
-      dur.textContent = formatTimecode(item.duration || 0);
-
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'row-load-btn';
-      btn.textContent = 'Inspect';
-      btn.addEventListener('click', () => {
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'btn-recent-load';
+      loadBtn.textContent = 'Open';
+      loadBtn.addEventListener('click', () => {
         dockUrl.value = item.url || `https://www.tiktok.com/@a/video/${item.id}`;
+        syncInputState();
         runExtraction(dockUrl.value);
       });
 
-      right.appendChild(dur);
-      right.appendChild(btn);
-
-      row.appendChild(img);
-      row.appendChild(info);
-      row.appendChild(right);
-      recentList.appendChild(row);
+      card.appendChild(img);
+      card.appendChild(info);
+      card.appendChild(loadBtn);
+      recentList.appendChild(card);
     }
   }
 
@@ -177,13 +252,13 @@ document.addEventListener('DOMContentLoaded', () => {
   if (clearHistoryBtn) {
     clearHistoryBtn.addEventListener('click', () => {
       try {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(HISTORY_KEY);
       } catch {}
-      renderHistory(DEFAULT_RECENT);
+      renderHistory([]);
     });
   }
 
-  // Video Transport Controls
+  // 7. Video Player Transport Controls
   if (playerTrigger && mediaVideo) {
     playerTrigger.addEventListener('click', (e) => {
       if (e.target.closest('#muteBtn')) return;
@@ -208,12 +283,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     mediaVideo.addEventListener('timeupdate', () => {
       const cur = mediaVideo.currentTime || 0;
-      const dur = mediaVideo.duration || 59;
+      const dur = mediaVideo.duration || 0;
       if (timecodeText) {
         timecodeText.textContent = `${formatTimecode(cur)} / ${formatTimecode(dur)}`;
       }
       if (scrubberFill && dur > 0) {
-        const pct = Math.min(100, Math.max(4, (cur / dur) * 100));
+        const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
         scrubberFill.style.width = `${pct.toFixed(1)}%`;
       }
     });
@@ -227,19 +302,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Paste Button
+  // 8. Paste Clipboard & Sample Link Buttons
   if (pasteBtn) {
     pasteBtn.addEventListener('click', async () => {
       try {
         if (navigator.clipboard && navigator.clipboard.readText) {
           const text = await navigator.clipboard.readText();
-          if (text) {
+          if (text && text.trim()) {
             dockUrl.value = text.trim();
-            pasteBtn.textContent = 'Pasted';
+            syncInputState();
+            if (pasteBtnLabel) pasteBtnLabel.textContent = 'Pasted';
             setTimeout(() => {
-              pasteBtn.textContent = 'Paste';
+              if (pasteBtnLabel) pasteBtnLabel.textContent = 'Paste Link';
             }, 1200);
             runExtraction(dockUrl.value);
+          } else {
+            dockUrl.focus();
           }
         } else {
           dockUrl.focus();
@@ -250,36 +328,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Sample Button
   if (sampleBtn) {
     sampleBtn.addEventListener('click', () => {
-      dockUrl.value = DEFAULT_SAMPLE_URL;
-      runExtraction(DEFAULT_SAMPLE_URL);
+      dockUrl.value = DEMO_LINK;
+      syncInputState();
+      runExtraction(DEMO_LINK);
     });
   }
 
-  if (retryBtn) {
-    retryBtn.addEventListener('click', () => {
-      dockUrl.value = DEFAULT_SAMPLE_URL;
-      runExtraction(DEFAULT_SAMPLE_URL);
-    });
-  }
-
-  // Copy Clean URL Button
+  // 9. Copy Clean Link Button
   if (btnCopyLink) {
-    btnCopyLink.addEventListener('click', async (e) => {
-      e.preventDefault();
+    btnCopyLink.addEventListener('click', async () => {
+      if (!currentCleanUrl) return;
       try {
         await navigator.clipboard.writeText(currentCleanUrl);
-        btnCopyLink.textContent = 'Copied';
+        btnCopyLink.textContent = 'Copied Link';
         setTimeout(() => {
-          btnCopyLink.textContent = 'Copy URL';
+          btnCopyLink.textContent = 'Copy Clean Link';
         }, 1200);
       } catch {}
     });
   }
 
-  // Core Extraction Runner
+  // 10. Core Extraction Handler
   async function runExtraction(rawUrl) {
     const url = (rawUrl || '').trim();
     if (!url) {
@@ -293,31 +364,26 @@ document.addEventListener('DOMContentLoaded', () => {
     btnText.style.display = 'none';
     btnSpinner.style.display = 'inline';
     extractBtn.disabled = true;
-    inspectorCard.classList.add('transitioning');
-    if (statusNotice) statusNotice.textContent = 'Resolving stream on Edge...';
 
     try {
       const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Could not resolve TikTok link. Check that the video is public.');
+        throw new Error(data.error || 'Could not resolve TikTok link. Please check that the video is public.');
       }
 
       currentCleanUrl = data.id ? `https://www.tiktok.com/@${data.author?.unique_id || 'a'}/video/${data.id}` : url;
 
-      // Update Header & IDs
       const isPhoto = Array.isArray(data.images) && data.images.length > 0;
       mediaTypeBadge.textContent = isPhoto ? `Photo Carousel · ${data.images.length} Slides` : 'No Watermark · MP4';
       mediaIdBadge.textContent = data.id ? `#${String(data.id).slice(0, 8)}` : '#Resolved';
 
-      // Update KPIs
       statViews.textContent = formatNumber(data.stats?.views || 0);
       statLikes.textContent = formatNumber(data.stats?.likes || 0);
       statComments.textContent = formatNumber(data.stats?.comments || 0);
       statShares.textContent = formatNumber(data.stats?.shares || 0);
 
-      // Update Creator & Caption
       creatorAvatar.src = data.author?.avatar || 'sample-avatar.jpg';
       creatorName.textContent = cleanLabel(data.author?.nickname, 'TikTok Creator');
       const handleStr = data.author?.unique_id ? `@${data.author.unique_id.replace(/^@/, '')}` : '@tiktok';
@@ -330,7 +396,6 @@ document.addEventListener('DOMContentLoaded', () => {
       mediaCaption.textContent = cleanLabel(data.title, 'Original TikTok media stream.');
       audioTitle.textContent = cleanLabel(data.music?.title, 'Original Sound');
 
-      // Video Player vs Photo Carousel
       const playableVideo = data.downloads?.fast_video || data.downloads?.hd_video;
       if (isPhoto) {
         photoGridWrap.style.display = 'flex';
@@ -353,13 +418,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (playableVideo) {
         mediaVideo.src = `/api/download?url=${encodeURIComponent(playableVideo)}&inline=1`;
-        mediaVideo.poster = data.cover || 'sample-cover.jpg';
+        mediaVideo.poster = data.cover || '';
         mediaVideo.load();
-        timecodeText.textContent = `0:00 / ${formatTimecode(durSec || 59)}`;
+        timecodeText.textContent = `0:00 / ${formatTimecode(durSec)}`;
         scrubberFill.style.width = '0%';
       }
 
-      // Update Export Links
       const videoFilename = `tiktok_${data.id || Date.now()}_clean.mp4`;
       const audioFilename = `tiktok_${data.id || Date.now()}_audio.mp3`;
 
@@ -367,27 +431,30 @@ document.addEventListener('DOMContentLoaded', () => {
         const targetVid = data.downloads.hd_video || data.downloads.fast_video;
         const fallbackVid = data.downloads.fast_video || '';
         btnHdVideo.href = `/api/download?url=${encodeURIComponent(targetVid)}&fallback=${encodeURIComponent(fallbackVid)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnHdVideo.style.display = 'flex';
-        videoSubLabel.textContent = `MP4 · H.264${sizeMb}`;
+        btnHdVideo.style.display = selectedMode === 'audio' ? 'none' : 'flex';
+        videoSubLabel.textContent = `Original MP4 · H.264 Stream${sizeMb}`;
       } else {
         btnHdVideo.style.display = 'none';
       }
 
       if (data.downloads?.audio) {
         btnAudioMp3.href = `/api/download?url=${encodeURIComponent(data.downloads.audio)}&filename=${encodeURIComponent(audioFilename)}`;
-        btnAudioMp3.style.display = 'flex';
+        btnAudioMp3.style.display = selectedMode === 'video' ? 'none' : 'flex';
       } else {
         btnAudioMp3.style.display = 'none';
       }
 
       if (data.downloads?.fast_video) {
         btnFastServer.href = `/api/download?url=${encodeURIComponent(data.downloads.fast_video)}&filename=${encodeURIComponent(videoFilename)}`;
-        btnFastServer.style.display = 'inline';
+        btnFastServer.style.display = 'inline-flex';
       }
 
       if (data.cover) {
         btnCover.href = data.cover;
       }
+
+      inspectorCard.style.display = 'flex';
+      inspectorCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
       saveToHistory({
         id: String(data.id || Date.now()),
@@ -395,20 +462,17 @@ document.addEventListener('DOMContentLoaded', () => {
         title: cleanLabel(data.title, 'TikTok Video'),
         handle: handleStr,
         duration: durSec || 15,
-        cover: data.cover || 'sample-cover.jpg'
+        cover: data.cover || ''
       });
 
-      if (statusNotice) statusNotice.textContent = `Resolved ID ${data.id || 'Ready'}`;
       loadEdgeStats();
     } catch (err) {
-      errorText.textContent = err.message || 'Could not resolve TikTok link. Check that the video is public.';
+      errorText.textContent = err.message || 'Could not resolve TikTok link. Please check that the video is public.';
       errorBanner.style.display = 'flex';
-      if (statusNotice) statusNotice.textContent = 'Resolution failed';
     } finally {
       btnText.style.display = 'inline';
       btnSpinner.style.display = 'none';
       extractBtn.disabled = false;
-      inspectorCard.classList.remove('transitioning');
     }
   }
 
