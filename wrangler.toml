@@ -6,3 +6,8 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ADMIN_ID = "6775546602"
 CHANNEL_USERNAME = "@RHToolsOfficial"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tiktokdownloader"
+database_id = "39eda3d0-7ff8-4726-b2cf-d6987110e702"
