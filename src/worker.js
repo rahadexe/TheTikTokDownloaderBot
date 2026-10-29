@@ -68,18 +68,10 @@ function isStaleTelegramFileIdError(resp) {
   return /wrong file identifier|file reference|temporarily unavailable|invalid file_id/i.test(desc);
 }
 
-let cachedBotUsername = null;
+let cachedBotUsername = '@TheTikTokDownloaderBot';
 
 async function getBotTag(token) {
-  if (cachedBotUsername) return cachedBotUsername;
-  try {
-    const res = await tgCall(token, 'getMe', {});
-    if (res?.ok && res.result?.username) {
-      cachedBotUsername = '@' + res.result.username.replace(/^@/, '');
-      return cachedBotUsername;
-    }
-  } catch {}
-  return '@TheTikTokDownloaderBot';
+  return cachedBotUsername;
 }
 
 function getBotConfig(env = {}) {
@@ -321,10 +313,11 @@ async function handleUpdate(update, token, env = {}) {
     if (!claimed) return;
   }
 
+  // Non-blocking user stats recording: never delay Telegram response for analytics upsert!
   if (update.message?.from) {
-    await db.upsertUser(update.message.from, env).catch(() => {});
+    db.upsertUser(update.message.from, env).catch(() => {});
   } else if (update.callback_query?.from) {
-    await db.upsertUser(update.callback_query.from, env).catch(() => {});
+    db.upsertUser(update.callback_query.from, env).catch(() => {});
   }
 
   // 1. Callback Queries (Audio extraction)
@@ -1264,10 +1257,10 @@ async function extractFromTikWM(url) {
       if (!res.ok) break;
       const json = await res.json();
 
-      // Code -1 on TikWM is often "Free Api Limit: 1 request/second." on shared Cloudflare POP IPs
-      if (json && json.code === -1 && attempt === 0 && /limit|second|busy/i.test(String(json.msg || ''))) {
-        await sleep(1150 + Math.floor(Math.random() * 250));
-        continue;
+      // Code -1 on TikWM is "Free Api Limit: 1 request/second." on shared Cloudflare POP IPs
+      // Fast failover immediately to Engine 2 (Direct TikTok) with zero sleep delay!
+      if (json && json.code === -1) {
+        break;
       }
 
       if (json && json.code === 0 && json.data) {

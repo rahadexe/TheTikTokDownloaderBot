@@ -76,24 +76,41 @@ try {
   isNodeSqlite = false;
 }
 
+let d1InitPromise = null;
+
 /**
- * Auto-migrate Cloudflare D1 tables when env.DB binding is attached
+ * Auto-migrate Cloudflare D1 tables when env.DB binding is attached (Single Batch Roundtrip + Shared Promise)
  */
-async function ensureD1Schema(env) {
+export async function ensureD1Schema(env) {
   if (!env?.DB || d1Initialized) return;
-  d1Initialized = true;
-  try {
-    const statements = CORE_SCHEMA_SQL
-      .split(';')
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const stmt of statements) {
-      await env.DB.prepare(stmt).run().catch(() => {});
-    }
-    for (const colStmt of MIGRATION_COLUMNS) {
-      await env.DB.prepare(colStmt).run().catch(() => {});
-    }
-  } catch {}
+  if (!d1InitPromise) {
+    d1InitPromise = (async () => {
+      try {
+        if (typeof env.DB.exec === 'function') {
+          await env.DB.exec(CORE_SCHEMA_SQL);
+        } else {
+          const statements = CORE_SCHEMA_SQL
+            .split(';')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          const batch = statements.map((stmt) => env.DB.prepare(stmt));
+          await env.DB.batch(batch);
+        }
+      } catch {
+        try {
+          const statements = CORE_SCHEMA_SQL
+            .split(';')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          for (const stmt of statements) {
+            await env.DB.prepare(stmt).run().catch(() => {});
+          }
+        } catch {}
+      }
+      d1Initialized = true;
+    })();
+  }
+  return d1InitPromise;
 }
 
 // Bounded L1 In-Memory LRU Store (prevents Worker memory growth under heavy traffic)
