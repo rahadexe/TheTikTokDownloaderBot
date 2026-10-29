@@ -43,6 +43,12 @@ CREATE TABLE IF NOT EXISTS user_downloads (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS bot_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_users_downloads ON users(downloads_count);
 CREATE INDEX IF NOT EXISTS idx_cache_created ON video_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_link_video_id ON link_cache(video_id);

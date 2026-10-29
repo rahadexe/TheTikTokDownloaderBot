@@ -84,6 +84,48 @@ function getBotConfig(env = {}) {
   return { channelTag, adminId };
 }
 
+function bgTask(promise, ctx) {
+  if (!promise || typeof promise.catch !== 'function') return;
+  const p = promise.catch((err) => console.warn('bgTask warning:', err?.message));
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(p);
+  }
+}
+
+async function getActiveForceSubChannel(env) {
+  const dynamic = await db.getSetting('force_sub_channel', env, null);
+  if (dynamic !== null) return dynamic.trim();
+  const cfg = getBotConfig(env);
+  return cfg.channelTag || '@RHToolsOfficial';
+}
+
+async function checkChannelMember(token, channel, userId) {
+  if (!channel || channel === 'off' || channel === 'none' || channel === 'false') return true;
+  try {
+    const chatTarget = channel.startsWith('@') || channel.startsWith('-') ? channel : '@' + channel;
+    const res = await tgCall(token, 'getChatMember', {
+      chat_id: chatTarget,
+      user_id: Number(userId)
+    });
+    if (res?.ok && res.result) {
+      const status = res.result.status;
+      return (
+        status === 'creator' ||
+        status === 'administrator' ||
+        status === 'member' ||
+        (status === 'restricted' && Boolean(res.result.is_member))
+      );
+    }
+    // Fail-open on config/permission error so downloads never freeze if bot isn't admin
+    if (res?.error_code === 400 || res?.error_code === 403) {
+      console.warn('getChatMember check warning:', res.description);
+    }
+  } catch (err) {
+    console.warn('checkChannelMember error:', err.message);
+  }
+  return true;
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -270,7 +312,7 @@ export default {
 
       try {
         const update = await request.json();
-        const task = handleUpdate(update, botToken, env).catch((err) => {
+        const task = handleUpdate(update, botToken, env, ctx).catch((err) => {
           console.error('Unhandled update error:', err);
         });
         if (ctx && typeof ctx.waitUntil === 'function') {
@@ -306,7 +348,7 @@ function extractInputTextWithEntities(msg) {
 /**
  * Handle incoming Telegram Update
  */
-async function handleUpdate(update, token, env = {}) {
+async function handleUpdate(update, token, env = {}, ctx = null) {
   // 0. Deduplicate retried webhook updates (prevents double delivery)
   if (update?.update_id !== undefined) {
     const claimed = await db.claimUpdateId(update.update_id);
@@ -315,14 +357,14 @@ async function handleUpdate(update, token, env = {}) {
 
   // Non-blocking user stats recording: never delay Telegram response for analytics upsert!
   if (update.message?.from) {
-    db.upsertUser(update.message.from, env).catch(() => {});
+    bgTask(db.upsertUser(update.message.from, env), ctx);
   } else if (update.callback_query?.from) {
-    db.upsertUser(update.callback_query.from, env).catch(() => {});
+    bgTask(db.upsertUser(update.callback_query.from, env), ctx);
   }
 
-  // 1. Callback Queries (Audio extraction)
+  // 1. Callback Queries (Audio extraction & Force-sub verification)
   if (update.callback_query) {
-    return handleCallback(update.callback_query, token, env);
+    return handleCallback(update.callback_query, token, env, ctx);
   }
 
   // 2. Inline Queries
@@ -341,10 +383,11 @@ async function handleUpdate(update, token, env = {}) {
   const { channelTag, adminId } = getBotConfig(env);
   const cmdToken = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 
-  // Admin command (/admin) — strictly isolated to ADMIN_ID
+  // Admin commands (/admin, /channel, /setchannel) — strictly isolated to ADMIN_ID
   if (cmdToken === '/admin') {
     if (chatId === adminId || msg.from?.id === adminId) {
       const stats = await db.getStats(env);
+      const activeChan = await getActiveForceSubChannel(env);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text:
@@ -352,7 +395,51 @@ async function handleUpdate(update, token, env = {}) {
           `Users: <b>${stats.users}</b>\n` +
           `Downloads: <b>${stats.downloads}</b>\n` +
           `Cache: <b>${stats.cachedVideos}</b>` +
-          (stats.cacheHits ? `\nCache Hits: <b>${stats.cacheHits}</b>` : ''),
+          (stats.cacheHits ? `\nCache Hits: <b>${stats.cacheHits}</b>` : '') +
+          `\n\nForce-Sub Channel: <b>${activeChan || 'None'}</b>\n` +
+          `Change: <code>/setchannel @YourChannel</code>\n` +
+          `Disable: <code>/setchannel off</code>`,
+        parse_mode: 'HTML'
+      });
+    }
+    return;
+  }
+
+  if (cmdToken === '/channel' || cmdToken === '/setchannel') {
+    if (chatId === adminId || msg.from?.id === adminId) {
+      const parts = text.split(/\s+/);
+      const newChan = parts[1]?.trim();
+      if (!newChan) {
+        const activeChan = await getActiveForceSubChannel(env);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `Current Force-Sub Channel: <b>${activeChan || 'None'}</b>\n\n` +
+            `Change channel:\n<code>/setchannel @YourChannel</code>\n\n` +
+            `Turn off gate:\n<code>/setchannel off</code>`,
+          parse_mode: 'HTML'
+        });
+      }
+
+      if (newChan.toLowerCase() === 'off') {
+        await db.setSetting('force_sub_channel', 'off', env);
+        db.clearVerifiedUsersMemory();
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Force-sub channel disabled.'
+        });
+      }
+
+      const formatted = newChan.startsWith('@') || newChan.startsWith('-') || newChan.startsWith('https://')
+        ? newChan
+        : '@' + newChan;
+
+      await db.setSetting('force_sub_channel', formatted, env);
+      db.clearVerifiedUsersMemory();
+
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `Force-sub channel updated to <b>${formatted}</b>.\nAll future downloads will verify against this channel.`,
         parse_mode: 'HTML'
       });
     }
@@ -387,6 +474,45 @@ async function handleUpdate(update, token, env = {}) {
     return;
   }
 
+  // 4. Force-Subscription Verification Gate (for user downloads)
+  const userId = msg.from?.id;
+  const activeChannel = await getActiveForceSubChannel(env);
+  if (activeChannel && activeChannel !== 'off' && userId && userId !== adminId) {
+    const isVerified = db.isUserVerifiedMemory(userId);
+    if (!isVerified) {
+      const isMember = await checkChannelMember(token, activeChannel, userId);
+      if (isMember) {
+        db.setUserVerifiedMemory(userId);
+      } else {
+        db.setPendingLink(userId, tiktokUrl);
+        const cleanChanTag = activeChannel.startsWith('@') ? activeChannel : '@' + activeChannel;
+        const channelUrl = activeChannel.startsWith('https://')
+          ? activeChannel
+          : `https://t.me/${activeChannel.replace(/^@/, '')}`;
+
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `To download this video, please join our channel first.`,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: `📢 Join ${cleanChanTag}`, url: channelUrl }],
+              [{ text: `✅ Joined — Download Video`, callback_data: `check_sub` }]
+            ]
+          }
+        });
+      }
+    }
+  }
+
+  return processTikTokDownload(tiktokUrl, chatId, msg.from, token, env, ctx);
+}
+
+/**
+ * Core TikTok Download & Delivery Runner
+ */
+async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ctx, statusMsgId = null) {
+  const botTag = await getBotTag(token);
+
   // Fast L1/D1/Edge Cache check:
   // 1) Direct video/photo ID in URL, OR 2) Cached short-link mapping, OR 3) 1-hop 0.08s HEAD redirect resolution!
   const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/video)\/([0-9]+)/);
@@ -396,7 +522,7 @@ async function handleUpdate(update, token, env = {}) {
     const fastHopId = await resolveShortLinkIdFast(tiktokUrl);
     if (fastHopId) {
       directId = fastHopId;
-      await db.setCachedShortLink(tiktokUrl, fastHopId, env).catch(() => {});
+      bgTask(db.setCachedShortLink(tiktokUrl, fastHopId, env), ctx);
     }
   }
 
@@ -421,17 +547,23 @@ async function handleUpdate(update, token, env = {}) {
         cached
       );
       if (sent?.ok) {
-        await db.incrementUserDownloads(msg.from?.id, env, {
-          videoId: cached.video_id || directId,
-          sourceUrl: tiktokUrl,
-          mediaType: 'video',
-          fromCache: true
-        }).catch(() => {});
+        if (statusMsgId) {
+          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId }).catch(() => {});
+        }
+        bgTask(
+          db.incrementUserDownloads(fromUser?.id, env, {
+            videoId: cached.video_id || directId,
+            sourceUrl: tiktokUrl,
+            mediaType: 'video',
+            fromCache: true
+          }),
+          ctx
+        );
         return;
       }
       // Self-heal: if Telegram invalidated cached file_id, purge it and proceed to fresh upload
       if (isStaleTelegramFileIdError(sent)) {
-        await db.invalidateCachedMedia(directId, env, 'video').catch(() => {});
+        bgTask(db.invalidateCachedMedia(directId, env, 'video'), ctx);
       }
     }
 
@@ -451,25 +583,34 @@ async function handleUpdate(update, token, env = {}) {
         botTag
       );
       if (cachedPhotoRes?.delivered) {
-        await db.incrementUserDownloads(msg.from?.id, env, {
-          videoId: cached.video_id || directId,
-          sourceUrl: tiktokUrl,
-          mediaType: 'photo',
-          fromCache: true
-        }).catch(() => {});
+        if (statusMsgId) {
+          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId }).catch(() => {});
+        }
+        bgTask(
+          db.incrementUserDownloads(fromUser?.id, env, {
+            videoId: cached.video_id || directId,
+            sourceUrl: tiktokUrl,
+            mediaType: 'photo',
+            fromCache: true
+          }),
+          ctx
+        );
         return;
       }
-      await db.invalidateCachedMedia(directId, env, 'photo').catch(() => {});
+      bgTask(db.invalidateCachedMedia(directId, env, 'photo'), ctx);
     }
   }
 
   await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_video' });
 
-  const statusMsg = await tgCall(token, 'sendMessage', {
-    chat_id: chatId,
-    text: 'Downloading...'
-  });
-  const statusMsgId = statusMsg?.result?.message_id;
+  let activeStatusId = statusMsgId;
+  if (!activeStatusId) {
+    const statusMsg = await tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: 'Downloading...'
+    });
+    activeStatusId = statusMsg?.result?.message_id;
+  }
 
   let releaseInFlight = null;
   if (directId && !inFlightVideoJobs.has(directId)) {
@@ -483,10 +624,10 @@ async function handleUpdate(update, token, env = {}) {
     const data = await extractTikTokData(tiktokUrl);
 
     if (!data || (!data.videoUrl && !(data.isPhoto && data.images?.length))) {
-      if (statusMsgId) {
+      if (activeStatusId) {
         await tgCall(token, 'editMessageText', {
           chat_id: chatId,
-          message_id: statusMsgId,
+          message_id: activeStatusId,
           text: 'Video is unavailable or private.'
         });
       }
@@ -494,8 +635,8 @@ async function handleUpdate(update, token, env = {}) {
     }
 
     if (data.id) {
-      await db.setCachedShortLink(tiktokUrl, data.id, env).catch(() => {});
-      await db.setCachedShortLink(`https://www.tiktok.com/@a/video/${data.id}`, data.id, env).catch(() => {});
+      bgTask(db.setCachedShortLink(tiktokUrl, data.id, env), ctx);
+      bgTask(db.setCachedShortLink(`https://www.tiktok.com/@a/video/${data.id}`, data.id, env), ctx);
     }
 
     const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 300);
@@ -505,22 +646,28 @@ async function handleUpdate(update, token, env = {}) {
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_photo' });
       const photoRes = await deliverPhotoPost(token, chatId, data, safeTitle, botTag);
       if (photoRes?.delivered) {
-        if (statusMsgId) {
-          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
+        if (activeStatusId) {
+          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: activeStatusId }).catch(() => {});
         }
         if (data.id) {
-          await db.setCachedVideo(data.id, data.title, '', env, {
-            photoFileIds: photoRes.photoFileIds,
-            audioUrl: data.audioUrl,
-            musicTitle: data.musicTitle
-          }).catch(() => {});
+          bgTask(
+            db.setCachedVideo(data.id, data.title, '', env, {
+              photoFileIds: photoRes.photoFileIds,
+              audioUrl: data.audioUrl,
+              musicTitle: data.musicTitle
+            }),
+            ctx
+          );
         }
-        await db.incrementUserDownloads(msg.from?.id, env, {
-          videoId: data.id || directId,
-          sourceUrl: tiktokUrl,
-          mediaType: 'photo',
-          fromCache: false
-        }).catch(() => {});
+        bgTask(
+          db.incrementUserDownloads(fromUser?.id, env, {
+            videoId: data.id || directId,
+            sourceUrl: tiktokUrl,
+            mediaType: 'photo',
+            fromCache: false
+          }),
+          ctx
+        );
         return;
       }
       throw new Error('Failed to deliver TikTok photo post');
@@ -540,19 +687,22 @@ async function handleUpdate(update, token, env = {}) {
           cached
         );
         if (cachedSent?.ok) {
-          if (statusMsgId) {
-            await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
+          if (activeStatusId) {
+            await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: activeStatusId }).catch(() => {});
           }
-          await db.incrementUserDownloads(msg.from?.id, env, {
-            videoId: data.id,
-            sourceUrl: tiktokUrl,
-            mediaType: 'video',
-            fromCache: true
-          }).catch(() => {});
+          bgTask(
+            db.incrementUserDownloads(fromUser?.id, env, {
+              videoId: data.id,
+              sourceUrl: tiktokUrl,
+              mediaType: 'video',
+              fromCache: true
+            }),
+            ctx
+          );
           return;
         }
         if (isStaleTelegramFileIdError(cachedSent)) {
-          await db.invalidateCachedMedia(data.id, env, 'video').catch(() => {});
+          bgTask(db.invalidateCachedMedia(data.id, env, 'video'), ctx);
         }
       }
     }
@@ -561,8 +711,8 @@ async function handleUpdate(update, token, env = {}) {
     const delivery = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl);
 
     if (delivery?.sent?.ok) {
-      if (statusMsgId) {
-        await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: statusMsgId });
+      if (activeStatusId) {
+        await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: activeStatusId }).catch(() => {});
       }
       const mediaObj = delivery.sent.result?.video || delivery.sent.result?.document;
       const tgFileId = mediaObj?.file_id;
@@ -570,28 +720,34 @@ async function handleUpdate(update, token, env = {}) {
       const finalId = data.id || delivery.meta?.id || directId;
 
       if (finalId) {
-        await db.setCachedShortLink(tiktokUrl, finalId, env).catch(() => {});
-        await db.setCachedVideo(finalId, data.title, tgFileId || '', env, {
-          fileUniqueId: tgUniqueId,
-          audioUrl: data.audioUrl || delivery.meta?.audioUrl,
-          musicTitle: data.musicTitle || delivery.meta?.musicTitle,
-          width: delivery.meta?.width || data.width,
-          height: delivery.meta?.height || data.height,
-          duration: delivery.meta?.duration || data.duration
-        }).catch(() => {});
+        bgTask(db.setCachedShortLink(tiktokUrl, finalId, env), ctx);
+        bgTask(
+          db.setCachedVideo(finalId, data.title, tgFileId || '', env, {
+            fileUniqueId: tgUniqueId,
+            audioUrl: data.audioUrl || delivery.meta?.audioUrl,
+            musicTitle: data.musicTitle || delivery.meta?.musicTitle,
+            width: delivery.meta?.width || data.width,
+            height: delivery.meta?.height || data.height,
+            duration: delivery.meta?.duration || data.duration
+          }),
+          ctx
+        );
       }
 
-      await db.incrementUserDownloads(msg.from?.id, env, {
-        videoId: finalId,
-        sourceUrl: tiktokUrl,
-        mediaType: 'video',
-        fromCache: false
-      }).catch(() => {});
+      bgTask(
+        db.incrementUserDownloads(fromUser?.id, env, {
+          videoId: finalId,
+          sourceUrl: tiktokUrl,
+          mediaType: 'video',
+          fromCache: false
+        }),
+        ctx
+      );
     } else if (delivery?.tooLarge) {
-      if (statusMsgId) {
+      if (activeStatusId) {
         await tgCall(token, 'editMessageText', {
           chat_id: chatId,
-          message_id: statusMsgId,
+          message_id: activeStatusId,
           text: 'Video exceeds Telegram 50MB bot limit.'
         });
       }
@@ -600,10 +756,10 @@ async function handleUpdate(update, token, env = {}) {
     }
   } catch (err) {
     console.error('TikTok delivery error:', err);
-    if (statusMsgId) {
+    if (activeStatusId) {
       await tgCall(token, 'editMessageText', {
         chat_id: chatId,
-        message_id: statusMsgId,
+        message_id: activeStatusId,
         text: 'Video is unavailable or private.'
       });
     }
@@ -907,12 +1063,54 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
 }
 
 /**
- * Handle Audio extraction callback ([ 🎵 Download Audio ])
+ * Handle Callbacks (Audio extraction + Force-sub verification)
  */
-async function handleCallback(cb, token, env = {}) {
+async function handleCallback(cb, token, env = {}, ctx = null) {
   const botTag = await getBotTag(token);
   const data = cb.data;
-  if (!data || !data.startsWith('audio_')) return;
+  if (!data) return;
+
+  if (data === 'check_sub') {
+    const userId = cb.from?.id;
+    const chatId = cb.message?.chat?.id;
+    const activeChannel = await getActiveForceSubChannel(env);
+    const isMember = await checkChannelMember(token, activeChannel, userId);
+
+    if (!isMember) {
+      return tgCall(token, 'answerCallbackQuery', {
+        callback_query_id: cb.id,
+        text: `Please join ${activeChannel} first!`,
+        show_alert: true
+      });
+    }
+
+    db.setUserVerifiedMemory(userId);
+    await tgCall(token, 'answerCallbackQuery', {
+      callback_query_id: cb.id,
+      text: 'Verified! Starting download...'
+    });
+
+    if (cb.message?.message_id) {
+      await tgCall(token, 'deleteMessage', {
+        chat_id: chatId,
+        message_id: cb.message.message_id
+      }).catch(() => {});
+    }
+
+    const pendingUrl = db.getPendingLink(userId);
+    db.clearPendingLink(userId);
+
+    if (pendingUrl) {
+      return processTikTokDownload(pendingUrl, chatId, cb.from, token, env, ctx);
+    } else {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'You are now verified! Send any TikTok link to download.'
+      });
+    }
+  }
+
+  if (!data.startsWith('audio_')) return;
 
   const videoId = data.replace('audio_', '');
   await tgCall(token, 'answerCallbackQuery', {

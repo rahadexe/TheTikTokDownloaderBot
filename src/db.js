@@ -46,6 +46,12 @@ const CORE_SCHEMA_SQL = `
     media_type TEXT DEFAULT 'video',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS bot_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 const MIGRATION_COLUMNS = [
@@ -810,4 +816,100 @@ export async function getStats(env) {
     cachedVideos: memoryStore.cache.size,
     cacheHits: 0
   };
+}
+
+/**
+ * Dynamic Bot Settings (L1 Memory + D1 + SQLite)
+ */
+export async function getSetting(key, env, fallback = null) {
+  if (!key) return fallback;
+  const memKey = `setting:${key}`;
+  if (memoryStore.cache.has(memKey)) {
+    return memoryStore.cache.get(memKey);
+  }
+  await ensureD1Schema(env);
+  if (env?.DB) {
+    try {
+      const row = await env.DB.prepare('SELECT value FROM bot_settings WHERE key = ?').bind(key).first();
+      if (row && row.value !== undefined) {
+        setBoundedMap(memoryStore.cache, memKey, row.value, 100);
+        return row.value;
+      }
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      const row = db.prepare('SELECT value FROM bot_settings WHERE key = ?').get(key);
+      if (row && row.value !== undefined) {
+        setBoundedMap(memoryStore.cache, memKey, row.value, 100);
+        return row.value;
+      }
+    } catch {}
+  }
+  return fallback;
+}
+
+export async function setSetting(key, value, env) {
+  if (!key) return;
+  const memKey = `setting:${key}`;
+  const valStr = String(value);
+  setBoundedMap(memoryStore.cache, memKey, valStr, 100);
+  await ensureD1Schema(env);
+  const now = new Date().toISOString();
+  if (env?.DB) {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO bot_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).bind(key, valStr, now).run();
+    } catch (e) {
+      console.warn('setSetting D1 error:', e.message);
+    }
+  } else if (isNodeSqlite && db) {
+    try {
+      db.prepare(`
+        INSERT INTO bot_settings (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(key, valStr, now);
+    } catch (e) {
+      console.warn('setSetting sqlite error:', e.message);
+    }
+  }
+}
+
+/**
+ * Force-Sub User Verification & Pending Link Store (Memory + Fast TTL)
+ */
+const verifiedUsersMem = new Map();
+const pendingUserLinks = new Map();
+
+export function isUserVerifiedMemory(userId) {
+  if (!userId) return false;
+  const exp = verifiedUsersMem.get(Number(userId));
+  return Boolean(exp && exp > Date.now());
+}
+
+export function setUserVerifiedMemory(userId, durationMs = 21600000) { // 6 hours
+  if (!userId) return;
+  setBoundedMap(verifiedUsersMem, Number(userId), Date.now() + durationMs, 5000);
+}
+
+export function clearVerifiedUsersMemory() {
+  verifiedUsersMem.clear();
+}
+
+export function setPendingLink(userId, url) {
+  if (!userId || !url) return;
+  setBoundedMap(pendingUserLinks, Number(userId), url, 2000);
+}
+
+export function getPendingLink(userId) {
+  if (!userId) return null;
+  return pendingUserLinks.get(Number(userId)) || null;
+}
+
+export function clearPendingLink(userId) {
+  if (!userId) return;
+  pendingUserLinks.delete(Number(userId));
 }

@@ -81,8 +81,13 @@ async function runTests() {
   globalThis.fetch = async (url, opts = {}) => {
     const urlStr = typeof url === 'string' ? url : url.url;
     if (urlStr.includes('api.telegram.org')) {
-      if (urlStr.includes('/getMe')) {
-        return new Response(JSON.stringify({ ok: true, result: { username: 'TheTikTokDownloaderBot' } }));
+      if (urlStr.includes('/getMe') || urlStr.includes('/getChatMember')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: { status: 'member', is_member: true, username: 'TheTikTokDownloaderBot' }
+          })
+        );
       }
       const isMultipart = opts.body instanceof FormData;
       let parsedBody = null;
@@ -290,7 +295,79 @@ async function runTests() {
       `9. Persistent Multi-Layer Cache & User History Stats (users=${stats.users}, downloads=${stats.downloads}, cache=${stats.cachedVideos}, cacheHits=${stats.cacheHits}): PASSED`
     );
 
-    console.log('\n🎉 ALL 9 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 10. Dynamic Force-Subscription Gate & /setchannel Admin Command
+    let mockMemberStatus = 'left';
+    const subUserChatId = 77665544;
+    const subWait = [];
+    db.clearVerifiedUsersMemory();
+
+    // Temporarily override /getChatMember to return left
+    const origSubFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/getChatMember')) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            result: { status: mockMemberStatus, is_member: mockMemberStatus === 'member' }
+          })
+        );
+      }
+      return origSubFetch(url, opts);
+    };
+
+    // User sends link while not a member -> should get join prompt
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 4,
+          message: {
+            message_id: 60,
+            chat: { id: subUserChatId, type: 'private' },
+            from: { id: subUserChatId, first_name: 'SubTester' },
+            text: uncachedLink
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', CHANNEL_USERNAME: '@RHToolsOfficial' },
+      { waitUntil: (p) => subWait.push(p) }
+    );
+    await Promise.all(subWait);
+
+    const gatePrompt = telegramCalls.find(
+      (c) => c.payload?.chat_id === subUserChatId && c.payload?.text?.includes('please join our channel first')
+    );
+    if (!gatePrompt) throw new Error('Force-sub gate failed to prompt non-member user');
+
+    // Admin sets channel dynamically via /setchannel
+    const adminWait = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 5,
+          message: {
+            message_id: 61,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '/setchannel @SponsorChannel'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => adminWait.push(p) }
+    );
+    await Promise.all(adminWait);
+
+    const updatedSetting = await db.getSetting('force_sub_channel', {});
+    if (updatedSetting !== '@SponsorChannel') throw new Error('Admin /setchannel failed to update setting in DB');
+
+    console.log('10. Dynamic Force-Subscription Gate & /setchannel Admin Command: PASSED');
+
+    console.log('\n🎉 ALL 10 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
   } finally {
     globalThis.fetch = origFetch;
   }
