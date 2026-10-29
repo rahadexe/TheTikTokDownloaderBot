@@ -281,15 +281,21 @@ export default {
     }
 
     // Set webhook helper route: GET /setWebhook
-    if (request.method === 'GET' && url.pathname === '/setWebhook') {
+    if (request.method === 'GET' && (url.pathname === '/setWebhook' || url.pathname === '/webhookInfo')) {
       const botToken = env.BOT_TOKEN;
       if (!botToken || botToken === 'YOUR_BOT_TOKEN_HERE') {
         return new Response('Error: BOT_TOKEN is not configured.', { status: 400 });
       }
+      if (url.pathname === '/webhookInfo') {
+        const info = await tgCall(botToken, 'getWebhookInfo', {});
+        return new Response(JSON.stringify(info, null, 2), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
       const webhookUrl = `${url.origin}/webhook`;
       const data = await tgCall(botToken, 'setWebhook', {
         url: webhookUrl,
-        allowed_updates: ['message', 'callback_query', 'inline_query']
+        allowed_updates: ['message', 'callback_query', 'inline_query', 'chat_join_request']
       });
       return new Response(JSON.stringify(data, null, 2), {
         headers: { 'Content-Type': 'application/json' }
