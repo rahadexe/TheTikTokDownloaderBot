@@ -20,6 +20,14 @@ const inFlightAudioJobs = new Map();
 const userRateLimit = new Map();     // userId -> [timestamps]
 const userSpamCooldown = new Map();  // userId -> cooldownEndTimestamp
 const userLastCooldownWarn = new Map(); // userId -> lastWarningTimestamp
+const userActiveUrl = new Map();     // userId -> trackKey
+
+export function getTikTokTrackKey(url) {
+  if (!url) return '';
+  const match = String(url).match(/\/video\/(\d+)/i);
+  if (match) return `tt:${match[1]}`;
+  return String(url).trim().toLowerCase().split('?')[0].replace(/\/+$/, '');
+}
 const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
 const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
 
@@ -1362,13 +1370,19 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   // In Groups/Supergroups: ONLY respond when valid TikTok link(s) are detected!
   // Stay 100% silent for any other text, conversation, or non-TikTok links (FB, IG, YouTube, etc.)
   if (isGroup) {
-    const groupTikTokUrls = extractAllTikTokUrls(text, 5);
+    const groupTikTokUrls = extractAllTikTokUrls(text, 1);
     if (groupTikTokUrls.length === 0) {
       return; // Silently ignore all non-TikTok messages in groups
     }
 
+    const singleUrl = groupTikTokUrls[0];
+    const trackKey = getTikTokTrackKey(singleUrl);
+    if (userId && userActiveUrl.get(userId) === trackKey) {
+      return; // Silently drop active duplicate request
+    }
+
     // Anti-Spam Flood Shield (Max 10 links per 60 seconds per user in group)
-    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length);
+    const rateLimitResult = checkUserRateLimit(userId, 1);
     if (rateLimitResult.blocked) {
       if (rateLimitResult.warning) {
         return tgCall(token, 'sendMessage', {
@@ -1380,32 +1394,38 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       return;
     }
 
-    // Force-Subscribe Verification Gate (Group support with group exemption)
-    if (userId && userId !== adminId) {
-      const isVerified = db.isUserVerifiedMemory(userId);
-      if (!isVerified) {
-        const currentChatId = chatId;
-        const currentChatUname = msg.chat.username ? `@${msg.chat.username}` : null;
-        const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
+    if (userId) {
+      userActiveUrl.set(userId, trackKey);
+    }
+    try {
+      // Force-Subscribe Verification Gate (Group support with group exemption)
+      if (userId && userId !== adminId) {
+        const isVerified = db.isUserVerifiedMemory(userId);
+        if (!isVerified) {
+          const currentChatId = chatId;
+          const currentChatUname = msg.chat.username ? `@${msg.chat.username}` : null;
+          const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
 
-        if (missing.length === 0) {
-          db.setUserVerifiedMemory(userId);
-        } else {
-          db.setPendingLink(userId, { url: groupTikTokUrls[0], chatId });
-          const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
-          return tgCall(token, 'sendMessage', {
-            chat_id: chatId,
-            text: promptText,
-            parse_mode: 'HTML',
-            reply_markup: markup
-          });
+          if (missing.length === 0) {
+            db.setUserVerifiedMemory(userId);
+          } else {
+            db.setPendingLink(userId, { url: singleUrl, chatId });
+            const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+            return tgCall(token, 'sendMessage', {
+              chat_id: chatId,
+              text: promptText,
+              parse_mode: 'HTML',
+              reply_markup: markup
+            });
+          }
         }
       }
-    }
 
-    // Process up to 5 links sequentially
-    for (const link of groupTikTokUrls) {
-      await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
+      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx);
+    } finally {
+      if (userId && userActiveUrl.get(userId) === trackKey) {
+        userActiveUrl.delete(userId);
+      }
     }
     return;
   }
@@ -1472,8 +1492,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  // Detect TikTok link(s) (supports up to 5 links in one message)
-  const tiktokUrls = extractAllTikTokUrls(text, 5);
+  // Detect TikTok link (strictly 1 link per message)
+  const tiktokUrls = extractAllTikTokUrls(text, 1);
   if (tiktokUrls.length === 0) {
     if (msg.chat?.type === "private" && !text.startsWith("/")) {
       const anyUrl = /https?:\/\/[^\s]+/i.test(text);
@@ -1492,8 +1512,14 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
+  const singleUrl = tiktokUrls[0];
+  const trackKey = getTikTokTrackKey(singleUrl);
+  if (userId && userActiveUrl.get(userId) === trackKey) {
+    return; // Silently drop active duplicate request
+  }
+
   // Anti-Spam Flood Shield (Max 10 links per 60 seconds)
-  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length);
+  const rateLimitResult = checkUserRateLimit(userId, 1);
   if (rateLimitResult.blocked) {
     if (rateLimitResult.warning) {
       return tgCall(token, "sendMessage", {
@@ -1509,32 +1535,38 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     adminViewState.set(userId, "MAIN");
   }
 
-  // Force-Subscribe Verification Gate (Shows only unjoined channels)
-  if (userId && userId !== adminId) {
-    const isVerified = db.isUserVerifiedMemory(userId);
-    if (!isVerified) {
-      const currentChatId = isGroup ? chatId : null;
-      const currentChatUname = isGroup && msg.chat.username ? `@${msg.chat.username}` : null;
-      const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
+  if (userId) {
+    userActiveUrl.set(userId, trackKey);
+  }
+  try {
+    // Force-Subscribe Verification Gate (Shows only unjoined channels)
+    if (userId && userId !== adminId) {
+      const isVerified = db.isUserVerifiedMemory(userId);
+      if (!isVerified) {
+        const currentChatId = isGroup ? chatId : null;
+        const currentChatUname = isGroup && msg.chat.username ? `@${msg.chat.username}` : null;
+        const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
 
-      if (missing.length === 0) {
-        db.setUserVerifiedMemory(userId);
-      } else {
-        db.setPendingLink(userId, { url: tiktokUrls[0], chatId });
-        const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
-        return tgCall(token, "sendMessage", {
-          chat_id: chatId,
-          text: promptText,
-          parse_mode: "HTML",
-          reply_markup: markup
-        });
+        if (missing.length === 0) {
+          db.setUserVerifiedMemory(userId);
+        } else {
+          db.setPendingLink(userId, { url: singleUrl, chatId });
+          const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+          return tgCall(token, "sendMessage", {
+            chat_id: chatId,
+            text: promptText,
+            parse_mode: "HTML",
+            reply_markup: markup
+          });
+        }
       }
     }
-  }
 
-  // Process up to 5 links sequentially with zero-noise
-  for (const link of tiktokUrls) {
-    await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
+    await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx);
+  } finally {
+    if (userId && userActiveUrl.get(userId) === trackKey) {
+      userActiveUrl.delete(userId);
+    }
   }
 }
 
@@ -3065,7 +3097,7 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
  * URL Extractor, Validator & Sanitizer
  * Supports schemeless links (vt.tiktok.com/...), strips attached emojis/punctuation, and rejects non-media profile/discover pages
  */
-export function extractAllTikTokUrls(text, limit = 5) {
+export function extractAllTikTokUrls(text, limit = 1) {
   if (!text || typeof text !== "string") return [];
   const regex = /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/gi;
   const matches = text.match(regex);
@@ -3215,6 +3247,7 @@ function escapeHtml(str) {
 }
 
 export {
+  userActiveUrl,
   handleUpdate,
   extractTikTokData,
   extractFromTikWM,

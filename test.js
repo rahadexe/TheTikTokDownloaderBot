@@ -5,7 +5,9 @@ import worker, {
   extractFromTikWM,
   extractFromTikTokDirect,
   extractFromTikMate,
-  fetchMediaStream
+  fetchMediaStream,
+  userActiveUrl,
+  getTikTokTrackKey
 } from './src/worker.js';
 import * as db from './src/db.js';
 
@@ -1226,13 +1228,19 @@ async function runTests() {
     globalThis.fetch = prevFetch18;
     console.log('18. Automated Bot Commands (/start), Profile & Menu Button Auto-Sync (/setup & /setWebhook): PASSED');
 
-    // 19. Multi-Link Extractor (up to 5) & Anti-Spam Flood Shield Verification
-    const multiUrls = extractAllTikTokUrls('Check: https://www.tiktok.com/@user/video/111 and vt.tiktok.com/ZSgQuVgCe/ and vt.tiktok.com/ZSgQuVgCe/');
+    // 19. Single-Link Extraction & Active Duplicate Drop & Anti-Spam Flood Shield Verification
+    const multiUrls = extractAllTikTokUrls('Check: https://www.tiktok.com/@user/video/111 and vt.tiktok.com/ZSgQuVgCe/ and vt.tiktok.com/ZSgQuVgCe/', 5);
     if (multiUrls.length !== 2) throw new Error('extractAllTikTokUrls failed to extract and deduplicate multiple links');
 
-    // 19a. Verify default limit extracts up to 5 links
-    const fiveUrls = extractAllTikTokUrls(Array.from({ length: 8 }, (_, i) => `https://www.tiktok.com/@user/video/700000000000000000${i}`).join(' '));
-    if (fiveUrls.length !== 5) throw new Error(`extractAllTikTokUrls default limit should be 5, got ${fiveUrls.length}`);
+    // 19a. Verify default limit strictly extracts 1 link
+    const singleDefaultUrls = extractAllTikTokUrls(Array.from({ length: 8 }, (_, i) => `https://www.tiktok.com/@user/video/700000000000000000${i}`).join(' '));
+    if (singleDefaultUrls.length !== 1) throw new Error(`extractAllTikTokUrls default limit should be 1, got ${singleDefaultUrls.length}`);
+
+    // Verify text + link mixture cleanly extracts only the single link
+    const textAndLinkUrls = extractAllTikTokUrls('Bro watch this awesome dance https://www.tiktok.com/@user/video/1234567890123456789! Amazing moves 🔥');
+    if (textAndLinkUrls.length !== 1 || textAndLinkUrls[0] !== 'https://www.tiktok.com/@user/video/1234567890123456789') {
+      throw new Error(`extractAllTikTokUrls failed on text and link mixture`);
+    }
 
     // 19b. Verify Anti-Spam Flood Shield unit logic (10 links/min, 11th triggers warning, 12th silent drop)
     const testSpamUser = 77112233;
@@ -1250,7 +1258,7 @@ async function runTests() {
       throw new Error('12th link within 3s must be throttled');
     }
 
-    // 19c. Webhook integration test for 2 links in a single message
+    // 19c. Webhook integration test: message with 2 links -> strictly 1st link processed
     const multiCalls = [];
     const prevFetch19 = globalThis.fetch;
     globalThis.fetch = async (url, opts = {}) => {
@@ -1289,8 +1297,35 @@ async function runTests() {
     );
     await Promise.all(multiWait);
 
+    // 19d. Active Duplicate Drop Test: sending same active link while downloading is dropped silently
+    userActiveUrl.set(multiChatId, getTikTokTrackKey('https://www.tiktok.com/@user/video/7692664817294773512'));
+    const dupCallsBefore = multiCalls.length;
+    const dupWait = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 41,
+          message: {
+            message_id: 1902,
+            chat: { id: multiChatId, type: 'private' },
+            from: { id: multiChatId, first_name: 'MultiUser' },
+            text: 'https://www.tiktok.com/@user/video/7692664817294773512'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => dupWait.push(p) }
+    );
+    await Promise.all(dupWait);
+    userActiveUrl.delete(multiChatId);
+    if (multiCalls.length !== dupCallsBefore) {
+      throw new Error('Active duplicate link should be dropped silently without calling Telegram API');
+    }
+
     globalThis.fetch = prevFetch19;
-    console.log('19. Multi-Link Processing (5 links limit) & Anti-Spam Flood Shield (10/min): PASSED');
+    console.log('19. Strictly Single Link & Active Duplicate Drop & Anti-Spam Flood Shield (10/min): PASSED');
 
     console.log('\n🎉 ALL 19 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
 
