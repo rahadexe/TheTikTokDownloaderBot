@@ -189,7 +189,7 @@ async function deleteEdgeCacheKey(keyPath) {
 }
 
 /**
- * Optional Cloudflare KV Helpers (if operator binds env.CACHE_KV later — zero config required)
+ * Optional Cloudflare KV Helpers (if operator binds env.CACHE_KV later   zero config required)
  */
 async function readKvJson(env, key) {
   if (!env?.CACHE_KV || !key) return null;
@@ -912,4 +912,53 @@ export function getPendingLink(userId) {
 export function clearPendingLink(userId) {
   if (!userId) return;
   pendingUserLinks.delete(Number(userId));
+}
+
+export async function getConnectedChats(env) {
+  const raw = await getSetting('connected_chats', env, null);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {}
+  }
+  const single = await getSetting('force_sub_channel', env, null);
+  if (single && single !== 'off' && single !== 'none') {
+    const cleanTag = single.startsWith('@') || single.startsWith('-') ? single : '@' + single;
+    return [{ target: cleanTag, title: cleanTag, chat_key: cleanTag }];
+  }
+  const channelTag = env?.CHANNEL_USERNAME
+    ? (env.CHANNEL_USERNAME.startsWith('@') ? env.CHANNEL_USERNAME : '@' + env.CHANNEL_USERNAME)
+    : '@RHToolsOfficial';
+  if (channelTag && channelTag !== 'off') {
+    return [{ target: channelTag, title: channelTag, chat_key: channelTag }];
+  }
+  return [];
+}
+
+export async function saveConnectedChats(chats, env) {
+  const list = Array.isArray(chats) ? chats : [];
+  await setSetting('connected_chats', JSON.stringify(list), env);
+  if (list.length > 0) {
+    await setSetting('force_sub_channel', list[0].target, env);
+  } else {
+    await setSetting('force_sub_channel', 'off', env);
+  }
+  clearVerifiedUsersMemory();
+}
+
+export async function getAllUserIds(env) {
+  await ensureD1Schema(env);
+  if (env?.DB) {
+    try {
+      const res = await env.DB.prepare('SELECT id FROM users ORDER BY id ASC').all();
+      return (res.results || []).map((r) => Number(r.id)).filter(Boolean);
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      const rows = db.prepare('SELECT id FROM users ORDER BY id ASC').all();
+      return rows.map((r) => Number(r.id)).filter(Boolean);
+    } catch {}
+  }
+  return Array.from(memoryStore.users.keys()).map(Number).filter(Boolean);
 }

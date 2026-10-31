@@ -36,7 +36,7 @@ const inFlightAudioJobs = new Map();
 /**
  * Lightweight 1-hop short-link redirect resolver (0.08s HEAD hop):
  * Resolves ANY new vt.tiktok.com / vm.tiktok.com / /t/ link to its canonical TikTok video_id
- * BEFORE calling external scrapers — so different share links for an already-cached video forward instantly!
+ * BEFORE calling external scrapers : so different share links for an already-cached video forward instantly!
  */
 async function resolveShortLinkIdFast(tiktokUrl) {
   try {
@@ -354,6 +354,95 @@ function extractInputTextWithEntities(msg) {
 /**
  * Handle incoming Telegram Update
  */
+
+function getMainAdminKeyboard() {
+  return {
+    keyboard: [[{ text: '⚙️ Admin Panel' }]],
+    resize_keyboard: true
+  };
+}
+
+function getAdminPanelKeyboard(channels = []) {
+  const chRights = {
+    is_anonymous: false,
+    can_manage_chat: true,
+    can_delete_messages: false,
+    can_manage_video_chats: false,
+    can_restrict_members: false,
+    can_promote_members: false,
+    can_change_info: false,
+    can_invite_users: true,
+    can_post_stories: false,
+    can_edit_stories: false,
+    can_delete_stories: false,
+    can_post_messages: true,
+    can_edit_messages: false
+  };
+
+  const grpRights = {
+    is_anonymous: false,
+    can_manage_chat: true,
+    can_delete_messages: false,
+    can_manage_video_chats: false,
+    can_restrict_members: false,
+    can_promote_members: false,
+    can_change_info: false,
+    can_invite_users: true,
+    can_post_stories: false,
+    can_edit_stories: false,
+    can_delete_stories: false
+  };
+
+  const addRow = channels.length < 3
+    ? [
+        {
+          text: '📢 Add Channel',
+          request_chat: {
+            request_id: 101,
+            chat_is_channel: true,
+            user_administrator_rights: chRights,
+            bot_administrator_rights: chRights,
+            request_title: true,
+            request_username: true
+          }
+        },
+        {
+          text: '👥 Add Group',
+          request_chat: {
+            request_id: 102,
+            chat_is_channel: false,
+            user_administrator_rights: grpRights,
+            bot_administrator_rights: grpRights,
+            request_title: true,
+            request_username: true
+          }
+        }
+      ]
+    : [
+        { text: '📢 Add Channel' },
+        { text: '👥 Add Group' }
+      ];
+
+  const rows = [addRow];
+  if (channels.length > 0) {
+    rows.push([{ text: '🗑️ Disconnect' }, { text: '📣 Broadcast' }]);
+    rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
+  } else {
+    rows.push([{ text: '📣 Broadcast' }]);
+    rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
+  }
+
+  return {
+    keyboard: rows,
+    resize_keyboard: true
+  };
+}
+
+function formatConnectedChatsList(channels = []) {
+  if (!channels || channels.length === 0) return '• <i>None</i>';
+  return channels.map((c) => `• <b>${escapeHtml(c.title || c.target)}</b>`).join('\n');
+}
+
 async function handleUpdate(update, token, env = {}, ctx = null) {
   // 0. Deduplicate retried webhook updates (prevents double delivery)
   if (update?.update_id !== undefined) {
@@ -381,58 +470,204 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   // 3. Regular Messages (support text, media captions, and hyperlinked entities)
   const msg = update.message;
   if (!msg) return;
-  const text = extractInputTextWithEntities(msg);
-  if (!text) return;
-
   const chatId = msg.chat.id;
   const botTag = await getBotTag(token);
   const { channelTag, adminId } = getBotConfig(env);
+  const isAdminUser = chatId === adminId || msg.from?.id === adminId;
+
+  // Handle Telegram request_chat shared responses (does not have msg.text)
+  if (isAdminUser && msg.chat_shared) {
+    const sharedChatId = msg.chat_shared.chat_id;
+    const channels = await db.getConnectedChats(env);
+    if (channels.length >= 3) {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '⚠️ Limit reached (<b>3/3</b>). Disconnect a chat first.',
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(channels)
+      });
+    }
+    let chatTitle = msg.chat_shared.title || '';
+    let chatUname = msg.chat_shared.username ? `@${msg.chat_shared.username}` : '';
+    try {
+      const cInfo = await tgCall(token, 'getChat', { chat_id: sharedChatId });
+      if (cInfo?.ok && cInfo.result) {
+        chatTitle = cInfo.result.title || chatTitle;
+        chatUname = cInfo.result.username ? `@${cInfo.result.username}` : chatUname;
+      }
+    } catch {}
+    const target = chatUname || String(sharedChatId);
+    const title = chatTitle || target;
+    if (!channels.some((c) => c.target === target || c.chat_key === String(sharedChatId))) {
+      channels.push({ target, title, chat_key: String(sharedChatId) });
+      await db.saveConnectedChats(channels, env);
+    }
+    const chList = formatConnectedChatsList(channels);
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: `✅ Connected: <b>${escapeHtml(title)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+      parse_mode: 'HTML',
+      reply_markup: getAdminPanelKeyboard(channels)
+    });
+  }
+
+  const text = extractInputTextWithEntities(msg);
+  if (!text) return;
   const cmdToken = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 
-  // Admin commands (/admin, /channel, /setchannel) — strictly isolated to ADMIN_ID
-  if (cmdToken === '/admin') {
-    if (chatId === adminId || msg.from?.id === adminId) {
+  // Admin Level 1 & Level 2 Navigation
+  if (isAdminUser) {
+    if (text === 'Back') {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '👋 <b>Admin Mode closed.</b>\nSend a link to download.',
+        parse_mode: 'HTML',
+        reply_markup: getMainAdminKeyboard()
+      });
+    }
+
+    if (text === '⚙️ Admin Panel' || cmdToken === '/admin') {
       const stats = await db.getStats(env);
-      const activeChan = await getActiveForceSubChannel(env);
+      const channels = await db.getConnectedChats(env);
+      const chList = formatConnectedChatsList(channels);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text:
-          `<b>Admin Console</b>\n\n` +
-          `Users: <b>${stats.users}</b>\n` +
-          `Downloads: <b>${stats.downloads}</b>\n` +
-          `Cache: <b>${stats.cachedVideos}</b>` +
-          (stats.cacheHits ? `\nCache Hits: <b>${stats.cacheHits}</b>` : '') +
-          `\n\nForce-Sub Channel: <b>${activeChan || 'None'}</b>\n` +
-          `Change: <code>/setchannel @YourChannel</code>\n` +
-          `Disable: <code>/setchannel off</code>`,
-        parse_mode: 'HTML'
+          `⚙️ <b>Admin Panel</b>\n` +
+          `<blockquote>` +
+          `Total Users: <b>${stats.users}</b>\n` +
+          `Active Users: <b>${stats.activeUsers || stats.users}</b>\n` +
+          `Total Downloads: <b>${stats.downloads}</b>\n` +
+          `Cached Videos: <b>${stats.cachedVideos}</b>` +
+          `</blockquote>\n\n` +
+          `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(channels)
       });
     }
-    return;
-  }
 
-  if (cmdToken === '/channel' || cmdToken === '/setchannel') {
-    if (chatId === adminId || msg.from?.id === adminId) {
+    if (text === '📊 Activity') {
+      const stats = await db.getStats(env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text:
+          `📊 <b>System Activity</b>\n\n` +
+          `<blockquote>` +
+          `Total Users: <b>${stats.users}</b>\n` +
+          `Total Downloads: <b>${stats.downloads}</b>\n` +
+          `Cached Items: <b>${stats.cachedVideos}</b>\n` +
+          `Cache Hits: <b>${stats.cacheHits || 0}</b>` +
+          `</blockquote>`,
+        parse_mode: 'HTML',
+        reply_markup: {
+          keyboard: [[{ text: 'Back' }]],
+          resize_keyboard: true
+        }
+      });
+    }
+
+    if (text === '🗑️ Disconnect') {
+      const channels = await db.getConnectedChats(env);
+      if (channels.length === 0) {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'No connected chats to disconnect.',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+      }
+      const rows = channels.map((c) => [{ text: `❌ Disconnect ${c.title || c.target}` }]);
+      rows.push([{ text: 'Back' }]);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'Select a chat to disconnect:',
+        reply_markup: { keyboard: rows, resize_keyboard: true }
+      });
+    }
+
+    if (text.startsWith('❌ Disconnect ')) {
+      const toRemove = text.replace('❌ Disconnect ', '').trim();
+      const channels = await db.getConnectedChats(env);
+      const remaining = channels.filter((c) => (c.title || c.target) !== toRemove && c.target !== toRemove);
+      await db.saveConnectedChats(remaining, env);
+      const chList = formatConnectedChatsList(remaining);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `✅ Disconnected: <b>${escapeHtml(toRemove)}</b>\n\n<b>Connected Chats (${remaining.length}/3):</b>\n${chList}`,
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(remaining)
+      });
+    }
+
+    if (text === '📣 Broadcast') {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '📣 <b>Broadcast Mode</b>\n\nSend <code>/broadcast Your message here</code> to broadcast an announcement to all registered users.',
+        parse_mode: 'HTML',
+        reply_markup: {
+          keyboard: [[{ text: 'Back' }]],
+          resize_keyboard: true
+        }
+      });
+    }
+
+    if (cmdToken === '/broadcast') {
+      const bcText = text.replace(/^\/broadcast\s+/i, '').trim();
+      if (!bcText) {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '⚠️ Please provide a message: <code>/broadcast Hello users!</code>',
+          parse_mode: 'HTML'
+        });
+      }
+      const userIds = await db.getAllUserIds(env);
+      let sent = 0;
+      let failed = 0;
+      for (const uid of userIds) {
+        try {
+          const r = await tgCall(token, 'sendMessage', {
+            chat_id: uid,
+            text: bcText,
+            parse_mode: 'HTML'
+          });
+          if (r?.ok) sent++; else failed++;
+        } catch {
+          failed++;
+        }
+      }
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `📣 <b>Broadcast Completed!</b>\n\nDelivered: <b>${sent}</b>\nFailed: <b>${failed}</b>`,
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(await db.getConnectedChats(env))
+      });
+    }
+
+
+
+    if (cmdToken === '/channel' || cmdToken === '/setchannel') {
       const parts = text.split(/\s+/);
       const newChan = parts[1]?.trim();
       if (!newChan) {
-        const activeChan = await getActiveForceSubChannel(env);
+        const channels = await db.getConnectedChats(env);
+        const chList = formatConnectedChatsList(channels);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text:
-            `Current Force-Sub Channel: <b>${activeChan || 'None'}</b>\n\n` +
-            `Change channel:\n<code>/setchannel @YourChannel</code>\n\n` +
-            `Turn off gate:\n<code>/setchannel off</code>`,
-          parse_mode: 'HTML'
+            `<b>Connected Chats (${channels.length}/3):</b>\n${chList}\n\n` +
+            `Add channel: <code>/setchannel @YourChannel</code>\n` +
+            `Turn off all: <code>/setchannel off</code>`,
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
         });
       }
 
       if (newChan.toLowerCase() === 'off') {
+        await db.saveConnectedChats([], env);
         await db.setSetting('force_sub_channel', 'off', env);
-        db.clearVerifiedUsersMemory();
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Force-sub channel disabled.'
+          text: 'Force-sub channel disabled.',
+          reply_markup: getAdminPanelKeyboard([])
         });
       }
 
@@ -440,70 +675,132 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         ? newChan
         : '@' + newChan;
 
+      const channels = await db.getConnectedChats(env);
+      if (!channels.some((c) => c.target === formatted)) {
+        if (channels.length >= 3) channels.shift();
+        channels.push({ target: formatted, title: formatted, chat_key: formatted });
+        await db.saveConnectedChats(channels, env);
+      }
       await db.setSetting('force_sub_channel', formatted, env);
-      db.clearVerifiedUsersMemory();
 
+      const chList = formatConnectedChatsList(channels);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: `Force-sub channel updated to <b>${formatted}</b>.\nAll future downloads will verify against this channel.`,
-        parse_mode: 'HTML'
+        text: `Force-sub channel updated to <b>${formatted}</b>.\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(channels)
       });
     }
-    return;
   }
 
-  // /start or /help command (supports group /start@BotName and deep-link TikTok payloads)
+  // /start or /help command
   if (cmdToken === '/start' || cmdToken === '/help') {
     const payloadPart = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
     const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
     if (!deepTikTokUrl) {
+      const userName = msg.from?.first_name || 'there';
       const welcome =
-        `Updates: ${channelTag}\n\n` +
-        `Send any TikTok link to download video without watermark or extract audio.`;
+        `👋 <b>Welcome, ${escapeHtml(userName)}!</b>\n\n` +
+        `<blockquote>Download videos and audio from TikTok.</blockquote>\n\n` +
+        `Send a link to download.`;
 
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: welcome
+        text: welcome,
+        parse_mode: 'HTML',
+        reply_markup: isAdminUser ? getMainAdminKeyboard() : undefined
       });
     }
+  }
+
+  // Cross-Platform Routing & Cross-Promotion
+  const IG_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|instagr\.am)\/[^\s]+/i;
+  const FB_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:facebook\.com|fb\.watch|fb\.gg|fb\.com)\/[^\s]+/i;
+  const YT_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:youtube\.com|youtu\.be)\/[^\s]+/i;
+  const OTHER_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:x\.com|twitter\.com|pinterest\.com|pin\.it|reddit\.com|threads\.net)\/[^\s]+/i;
+
+  if (IG_REGEX.test(text)) {
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '📸 Instagram not supported.',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🎬 Insta & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]]
+      }
+    });
+  }
+
+  if (FB_REGEX.test(text)) {
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '📘 Facebook not supported.',
+      reply_markup: {
+        inline_keyboard: [[{ text: '🎬 Insta & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]]
+      }
+    });
+  }
+
+  if (YT_REGEX.test(text)) {
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '▶️ YouTube not supported.'
+    });
+  }
+
+  if (OTHER_REGEX.test(text)) {
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '⚠️ Platform not supported.'
+    });
   }
 
   // Detect TikTok link
   const tiktokUrl = extractTikTokUrl(text);
   if (!tiktokUrl) {
-    if (msg.chat.type === 'private' && !text.startsWith('/')) {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: 'Please send a valid TikTok video link.'
-      });
+    if (msg.chat?.type === 'private' && !text.startsWith('/')) {
+      const anyUrl = /https?:\/\/[^\s]+/i.test(text);
+      if (anyUrl) {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '⚠️ Invalid video link.'
+        });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '🔗 Send a TikTok link.'
+        });
+      }
     }
     return;
   }
 
   // 4. Force-Subscription Verification Gate (for user downloads)
   const userId = msg.from?.id;
-  const activeChannel = await getActiveForceSubChannel(env);
-  if (activeChannel && activeChannel !== 'off' && userId && userId !== adminId) {
+  const connectedChats = await db.getConnectedChats(env);
+  if (connectedChats.length > 0 && userId && userId !== adminId) {
     const isVerified = db.isUserVerifiedMemory(userId);
     if (!isVerified) {
-      const isMember = await checkChannelMember(token, activeChannel, userId);
-      if (isMember) {
+      const missing = [];
+      for (const ch of connectedChats) {
+        const isMember = await checkChannelMember(token, ch.target, userId);
+        if (!isMember) missing.push(ch);
+      }
+      if (missing.length === 0) {
         db.setUserVerifiedMemory(userId);
       } else {
         db.setPendingLink(userId, tiktokUrl);
-        const cleanChanTag = activeChannel.startsWith('@') ? activeChannel : '@' + activeChannel;
-        const channelUrl = activeChannel.startsWith('https://')
-          ? activeChannel
-          : `https://t.me/${activeChannel.replace(/^@/, '')}`;
+        const buttons = missing.map((ch) => {
+          const chUrl = ch.target.startsWith('https://')
+            ? ch.target
+            : `https://t.me/${ch.target.replace(/^@/, '')}`;
+          return [{ text: `📢 Join ${ch.title || ch.target}`, url: chUrl }];
+        });
+        buttons.push([{ text: '✅ I have joined', callback_data: 'check_sub' }]);
 
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: `To download this video, please join our channel first.`,
+          text: 'To download this video, please join our channel first.',
           reply_markup: {
-            inline_keyboard: [
-              [{ text: `📢 Join ${cleanChanTag}`, url: channelUrl }],
-              [{ text: `✅ Joined — Download Video`, callback_data: `check_sub` }]
-            ]
+            inline_keyboard: buttons
           }
         });
       }
@@ -750,24 +1047,46 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
         ctx
       );
     } else if (delivery?.tooLarge) {
-      if (activeStatusId) {
-        await tgCall(token, 'editMessageText', {
-          chat_id: chatId,
-          message_id: activeStatusId,
-          text: 'Video exceeds Telegram 50MB bot limit.'
-        });
+      const dlUrl = data.hdUrl || data.videoUrl || data.fallbackUrl;
+      const buttons = [];
+      if (dlUrl) {
+        buttons.push([{ text: '⬇️ Download Video', url: dlUrl }]);
       }
+      if (data.audioUrl) {
+        buttons.push([{ text: '🎵 Download Audio', url: data.audioUrl }]);
+      }
+      if (activeStatusId) {
+        await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: activeStatusId }).catch(() => {});
+      }
+      await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '<b>File is larger than 50MB</b>\n\n<blockquote>Please download directly below:</blockquote>',
+        parse_mode: 'HTML',
+        reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined
+      });
+      return;
     } else {
       throw new Error(delivery?.sent?.description || 'All video delivery tiers failed');
     }
   } catch (err) {
     console.error('TikTok delivery error:', err);
     if (activeStatusId) {
-      await tgCall(token, 'editMessageText', {
-        chat_id: chatId,
-        message_id: activeStatusId,
-        text: 'Video is unavailable or private.'
-      });
+      const lowErr = String(err?.message || '').toLowerCase();
+      if (lowErr.includes('private') || lowErr.includes('restricted')) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: activeStatusId,
+          text: '⚠️ This video is private or restricted.',
+          parse_mode: 'HTML'
+        }).catch(() => {});
+      } else {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: activeStatusId,
+          text: '⚠️ <b>Download failed due to server issue</b>\nPlease try again later.',
+          parse_mode: 'HTML'
+        }).catch(() => {});
+      }
     }
   } finally {
     if (releaseInFlight) {
@@ -828,7 +1147,7 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     if (sent?.ok) return { sent, meta: enrichedMeta, tooLarge: false };
   }
 
-  // Stage 3: Self-healing fallback — if primary engine's CDN links failed, pull fresh signed stream from backup engines
+  // Stage 3: Self-healing fallback   if primary engine's CDN links failed, pull fresh signed stream from backup engines
   if (originalUrl && data.source !== 'tiktok_direct') {
     const directData = await extractFromTikTokDirect(originalUrl);
     if (directData?.videoUrl) {
@@ -1079,13 +1398,18 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
   if (data === 'check_sub') {
     const userId = cb.from?.id;
     const chatId = cb.message?.chat?.id;
-    const activeChannel = await getActiveForceSubChannel(env);
-    const isMember = await checkChannelMember(token, activeChannel, userId);
+    const connectedChats = await db.getConnectedChats(env);
+    const missing = [];
+    for (const ch of connectedChats) {
+      const isMember = await checkChannelMember(token, ch.target, userId);
+      if (!isMember) missing.push(ch);
+    }
 
-    if (!isMember) {
+    if (missing.length > 0) {
+      const missingName = missing[0].title || missing[0].target;
       return tgCall(token, 'answerCallbackQuery', {
         callback_query_id: cb.id,
-        text: `Please join ${activeChannel} first!`,
+        text: `Please join ${missingName} first!`,
         show_alert: true
       });
     }
@@ -1546,6 +1870,8 @@ async function extractFromTikTokDirect(url) {
       }
     }
 
+    const effectiveCookies = cookieHeader || 'ttwid=1; tt_csrf_token=1';
+
     const html = await res.text();
     const match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
     if (!match) return null;
@@ -1577,7 +1903,7 @@ async function extractFromTikTokDirect(url) {
           musicTitle: item.music?.title || item.desc || 'TikTok Audio',
           thumbnail: images[0],
           duration: 0,
-          cookies: cookieHeader || null,
+          cookies: effectiveCookies,
           requiresWorkerUpload: true
         };
       }
@@ -1628,7 +1954,7 @@ async function extractFromTikTokDirect(url) {
       height: Number(item.video?.height || 0) || undefined,
       duration: Number(item.video?.duration || 0) || undefined,
       sizeBytes: bestSize,
-      cookies: cookieHeader || null,
+      cookies: effectiveCookies,
       requiresWorkerUpload: true
     };
   } catch (err) {

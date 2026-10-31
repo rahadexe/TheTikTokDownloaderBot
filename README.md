@@ -1,6 +1,6 @@
 # ⚡ TheTikTokDownloaderBot
 
-> **Ultra-fast, 100% serverless Telegram Bot to download TikTok videos without watermark in HD & extract MP3 audio — powered by Cloudflare Workers & Cloudflare D1.**
+> **Ultra-fast, 100% serverless Telegram Bot to download TikTok videos without watermark in HD & extract MP3 audio   powered by Cloudflare Workers & Cloudflare D1.**
 
 [![Telegram Bot](https://img.shields.io/badge/Telegram-@TheTikTokDownloaderBot-2CA5E0?logo=telegram&logoColor=white)](https://t.me/TheTikTokDownloaderBot)
 [![Platform](https://img.shields.io/badge/Platform-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)

@@ -45,9 +45,18 @@ async function runTests() {
 
   // 3. Live Verification of All 3 Extraction Engines
   const liveTestUrl = 'https://vt.tiktok.com/ZSgQuVgCe/';
-  const e1 = await extractFromTikWM(liveTestUrl);
-  const e2 = await extractFromTikTokDirect(liveTestUrl);
-  const e3 = await extractFromTikMate(liveTestUrl);
+  let e1, e2, e3;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      e1 = e1 || (await extractFromTikWM(liveTestUrl));
+      e2 = e2 || (await extractFromTikTokDirect(liveTestUrl));
+      e3 = e3 || (await extractFromTikMate(liveTestUrl));
+      if (e1?.videoUrl && e2?.videoUrl && e2?.cookies && e3?.videoUrl) break;
+    } catch (err) {
+      console.error('Extraction attempt error:', err);
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 
   if (!e1?.videoUrl) throw new Error('Engine 1 (TikWM) failed live extraction');
   if (!e2?.videoUrl || !e2?.cookies) throw new Error('Engine 2 (Direct TikTok Rehydration) failed live extraction');
@@ -367,7 +376,290 @@ async function runTests() {
 
     console.log('10. Dynamic Force-Subscription Gate & /setchannel Admin Command: PASSED');
 
-    console.log('\n🎉 ALL 10 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 11. Cross-Platform Classifiers and Cross-Promotion Routing
+    const waitIG = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 6,
+          message: {
+            message_id: 70,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: 'https://www.instagram.com/reel/DC_test/'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitIG.push(p) }
+    );
+    await Promise.all(waitIG);
+    const igCall = telegramCalls.find((c) => c.payload?.text?.includes('Instagram not supported'));
+    if (!igCall || igCall.payload?.reply_markup?.inline_keyboard?.[0]?.[0]?.url !== 'https://t.me/InstaFBDownloaderProBot') {
+      throw new Error('Instagram redirect call failed');
+    }
+
+    const waitFB = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 7,
+          message: {
+            message_id: 71,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: 'https://fb.watch/test1234/'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitFB.push(p) }
+    );
+    await Promise.all(waitFB);
+    const fbCall = telegramCalls.find((c) => c.payload?.text?.includes('Facebook not supported'));
+    if (!fbCall || fbCall.payload?.reply_markup?.inline_keyboard?.[0]?.[0]?.url !== 'https://t.me/InstaFBDownloaderProBot') {
+      throw new Error('Facebook redirect call failed');
+    }
+
+    const waitYT = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 8,
+          message: {
+            message_id: 72,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: 'https://youtube.com/watch?v=abc'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitYT.push(p) }
+    );
+    await Promise.all(waitYT);
+    const ytCall = telegramCalls.find((c) => c.payload?.text?.includes('YouTube not supported'));
+    if (!ytCall) throw new Error('YouTube rejection call failed');
+
+    const waitOther = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 9,
+          message: {
+            message_id: 73,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: 'https://x.com/user/status/123'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitOther.push(p) }
+    );
+    await Promise.all(waitOther);
+    const otherCall = telegramCalls.find((c) => c.payload?.text?.includes('Platform not supported'));
+    if (!otherCall) throw new Error('Other platform rejection call failed');
+
+    const waitText = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 10,
+          message: {
+            message_id: 74,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: 'just regular message'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitText.push(p) }
+    );
+    await Promise.all(waitText);
+    const textCall = telegramCalls.find((c) => c.payload?.text?.includes('Send a TikTok link'));
+    if (!textCall) throw new Error('Non-link text prompt call failed');
+    console.log('11. Cross-Platform Classifiers and Cross-Promotion Routing: PASSED');
+
+    // 12. 2-Level Bottom Keyboard Admin Navigation
+    const waitAdmStart = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 11,
+          message: {
+            message_id: 80,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '/start'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitAdmStart.push(p) }
+    );
+    await Promise.all(waitAdmStart);
+    const admStartCall = telegramCalls.find((c) => c.payload?.chat_id === 6775546602 && c.payload?.text?.includes('Welcome'));
+    if (!admStartCall || admStartCall.payload?.reply_markup?.keyboard?.[0]?.[0]?.text !== '⚙️ Admin Panel') {
+      throw new Error('Admin start level 1 keyboard failed');
+    }
+
+    const waitAdmPanel = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 12,
+          message: {
+            message_id: 81,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '⚙️ Admin Panel'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitAdmPanel.push(p) }
+    );
+    await Promise.all(waitAdmPanel);
+    const admPanelCall = [...telegramCalls].reverse().find((c) => c.payload?.chat_id === 6775546602 && c.payload?.text?.includes('Admin Panel'));
+    if (!admPanelCall || !admPanelCall.payload?.reply_markup?.keyboard) {
+      throw new Error('Admin panel level 2 keyboard failed');
+    }
+
+    const waitAdmBack = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 13,
+          message: {
+            message_id: 82,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: 'Back'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitAdmBack.push(p) }
+    );
+    await Promise.all(waitAdmBack);
+    const admBackCall = [...telegramCalls].reverse().find((c) => c.payload?.chat_id === 6775546602 && c.payload?.text?.includes('Admin Mode closed'));
+    if (!admBackCall || admBackCall.payload?.reply_markup?.keyboard?.[0]?.[0]?.text !== '⚙️ Admin Panel') {
+      throw new Error('Admin Back transition to Level 1 keyboard failed');
+    }
+    console.log('12. 2-Level Bottom Keyboard Admin Navigation: PASSED');
+
+    // 13. chat_shared Native Channel Connection and Persistence
+    const waitChatShared = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 14,
+          message: {
+            message_id: 83,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            chat_shared: {
+              request_id: 101,
+              chat_id: -1001999888777
+            }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitChatShared.push(p) }
+    );
+    await Promise.all(waitChatShared);
+    const sharedChats = await db.getConnectedChats({});
+    if (!sharedChats.some((c) => c.chat_key === '-1001999888777' || c.target === '-1001999888777')) {
+      throw new Error('chat_shared channel connection failed to persist');
+    }
+    console.log('13. chat_shared Native Channel Connection and Persistence: PASSED');
+
+    // 14. Large Video (>50MB) Direct CDN Download Fallback
+    // Mock a video request whose CDN returns content-length > 50MB
+    const largeVideoId = '9998887776665554443';
+    const largeVideoUrl = `https://www.tiktok.com/@user/video/${largeVideoId}`;
+    
+    // Intercept fetch to provide mock TikWM response for large video, and oversized headers for its stream
+    const prevFetchForLarge = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('tikwm.com')) {
+        return new Response(JSON.stringify({
+          code: 0,
+          msg: 'success',
+          data: {
+            id: largeVideoId,
+            title: 'Large 60MB Video Test',
+            play: 'https://cdn.test/large_video.mp4',
+            music: 'https://cdn.test/large_audio.mp3',
+            size: 62914560
+          }
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+      if (urlStr.includes('large_video.mp4')) {
+        return new Response(new Uint8Array(1024), {
+          headers: {
+            'Content-Type': 'video/mp4',
+            'Content-Length': '62914560'
+          }
+        });
+      }
+      return prevFetchForLarge(url, opts);
+    };
+
+    db.setUserVerifiedMemory(uniqueChatId);
+    const waitLarge = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 15,
+          message: {
+            message_id: 95,
+            chat: { id: uniqueChatId, type: 'private' },
+            from: { id: uniqueChatId, first_name: 'Tester' },
+            text: largeVideoUrl
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => waitLarge.push(p) }
+    );
+    await Promise.all(waitLarge);
+
+    const largePrompt = telegramCalls.find((c) => c.payload?.text?.includes('File is larger than 50MB'));
+    if (!largePrompt) {
+      throw new Error('>50MB fallback direct download prompt was not sent');
+    }
+    const directBtn = largePrompt.payload?.reply_markup?.inline_keyboard?.[0]?.[0];
+    if (directBtn?.text !== '⬇️ Download Video' || directBtn?.url !== 'https://cdn.test/large_video.mp4') {
+      throw new Error('>50MB fallback download button URL mismatch');
+    }
+    console.log('14. Large Video (>50MB) Direct CDN Download Fallback: PASSED');
+
+    console.log('\n🎉 ALL 14 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
   } finally {
     globalThis.fetch = origFetch;
   }
