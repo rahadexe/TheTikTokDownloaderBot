@@ -380,7 +380,7 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
       if (!inviteUrl && !chat.username) {
         try {
           const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chat.id });
-          if (exp?.ok && exp.result) inviteUrl = exp.result;
+          if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
         } catch {}
       }
       channels.push({
@@ -848,8 +848,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       chatCheck = await tgCall(token, 'getChat', { chat_id: sharedChatId });
     } catch {}
 
-    const chatType = chatCheck?.result?.type;
-    if (chatCheck?.ok && (!['channel', 'group', 'supergroup'].includes(chatType) || chatType === 'private')) {
+    const chatType = chatCheck?.result?.type || (String(sharedChatId).startsWith('-') ? (msg.chat_shared?.request_id === 101 ? 'channel' : 'group') : 'channel');
+    if (chatCheck?.ok && chatCheck.result?.type && chatCheck.result.type === 'private') {
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text: '⚠️ <b>Invalid Chat Type:</b> Only Telegram Channels and Groups can be connected. Bots or user profiles cannot be added.',
@@ -860,9 +860,10 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
     // Validate bot is Administrator
     try {
-      const botId = token.split(':')[0];
-      const botMem = await tgCall(token, 'getChatMember', { chat_id: sharedChatId, user_id: Number(botId) });
-      if (!botMem?.ok || !['administrator', 'creator'].includes(botMem.result?.status)) {
+      const rawBotId = token.includes(':') ? token.split(':')[0] : token;
+      const botId = isNaN(Number(rawBotId)) ? rawBotId : Number(rawBotId);
+      const botMem = await tgCall(token, 'getChatMember', { chat_id: sharedChatId, user_id: botId });
+      if (botMem?.ok && botMem.result?.status && ['left', 'kicked'].includes(botMem.result?.status)) {
         const chatName = chatCheck?.result?.title || msg.chat_shared.title || String(sharedChatId);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
@@ -901,7 +902,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     if (!inviteUrl && !chatCheck?.result?.username) {
       try {
         const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: sharedChatId });
-        if (exp?.ok && exp.result) inviteUrl = exp.result;
+        if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
       } catch {}
     }
 
@@ -1330,10 +1331,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         : '@' + newChan;
       const channels = await db.getConnectedChats(env);
       if (!channels.some((c) => c.target === formatted)) {
-        if (channels.length >= 3) channels.shift();
-        channels.push({ target: formatted, title: formatted, chat_key: formatted });
+        if (channels.length >= 3) channels.pop();
+        channels.unshift({ target: formatted, title: formatted, chat_key: formatted });
         await db.saveConnectedChats(channels, env);
       }
+      await db.setSetting('force_sub_channel', formatted, env);
       const chList = formatConnectedChatsList(channels);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
@@ -1354,8 +1356,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       } catch {}
 
       try {
-        const botId = token.split(':')[0];
-        const botMem = await tgCall(token, 'getChatMember', { chat_id: chatId, user_id: Number(botId) });
+        const rawBotId = token.includes(':') ? token.split(':')[0] : token;
+        const botId = isNaN(Number(rawBotId)) ? rawBotId : Number(rawBotId);
+        const botMem = await tgCall(token, 'getChatMember', { chat_id: chatId, user_id: botId });
         if (!botMem?.ok || !['administrator', 'creator'].includes(botMem.result?.status)) {
           return tgCall(token, 'sendMessage', {
             chat_id: userId,
@@ -1384,7 +1387,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         let inviteUrl = '';
         try {
           const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chatId });
-          if (exp?.ok && exp.result) inviteUrl = exp.result;
+          if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
         } catch {}
         channels.push({
           target,
@@ -2298,13 +2301,24 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
   if (!data.startsWith('audio_')) return;
 
   const videoId = data.replace('audio_', '');
-  await tgCall(token, 'answerCallbackQuery', {
-    callback_query_id: cb.id,
-    text: 'Downloading audio...'
-  });
+  // 1. Silent answerCallbackQuery (NO toast popup)
+  await tgCall(token, 'answerCallbackQuery', { callback_query_id: cb.id });
 
   const chatId = cb.message?.chat?.id;
   if (!chatId) return;
+
+  // 2. Send 0% Progress Bar Status Message immediately
+  let audioStatusId = null;
+  try {
+    const sm = await tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '░░░░░░░░░░ <b>0%</b>',
+      parse_mode: 'HTML'
+    });
+    audioStatusId = sm?.result?.message_id || null;
+  } catch {}
+
+  const tracker = new ProgressBarTracker(chatId, audioStatusId, token);
   await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_document' });
 
   if (inFlightAudioJobs.has(videoId)) {
@@ -2314,9 +2328,10 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
   let releaseAudioLock = null;
 
   try {
-    // 1. Instant delivery if audio_file_id hash is already cached
+    // 3. Instant delivery if audio_file_id hash is already cached
     const cached = await db.getCachedVideo(videoId, env);
     if (cached && cached.audio_file_id) {
+      await tracker.update(100, true);
       const cachedTitle = safeUnicodeSlice(cached.music_title || cached.title || 'TikTok Audio', 50);
       const { html: safeCaption } = buildMediaCaption(cached.music_title || cached.title, cached.author, botTag);
 
@@ -2328,7 +2343,14 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
         caption: safeCaption,
         parse_mode: 'HTML'
       });
-      if (cachedRes?.ok) return;
+
+      if (cachedRes?.ok) {
+        if (audioStatusId) {
+          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: audioStatusId }).catch(() => {});
+        }
+        return;
+      }
+
       if (isStaleTelegramFileIdError(cachedRes)) {
         await db.invalidateCachedMedia(videoId, env, 'audio').catch(() => {});
       }
@@ -2341,7 +2363,8 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
       inFlightAudioJobs.set(videoId, p);
     }
 
-    // 2. Gather candidate audio streams (use cached audio_url first to avoid TikWM 1-req/sec rate limit!)
+    // 4. Progress 50% while extracting fresh/candidate audio streams
+    await tracker.update(50, true);
     let audioCandidates = [];
     let cookies = null;
     let displayTitle = cached?.title || '';
@@ -2353,7 +2376,7 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
 
     let meta = null;
     if (audioCandidates.length === 0) {
-      meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`);
+      meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`).catch(() => null);
       if (meta) {
         if (meta.audioUrl) audioCandidates.push(meta.audioUrl);
         cookies = meta.cookies || null;
@@ -2362,14 +2385,36 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
       }
     }
 
+    // Fallback: If no audioCandidates or cached URL failed, pull from Direct TikTok or TikMate
+    if (audioCandidates.length === 0) {
+      const dtData = await extractFromTikTokDirect(`https://www.tiktok.com/@a/video/${videoId}`).catch(() => null);
+      if (dtData?.audioUrl) {
+        audioCandidates.push(dtData.audioUrl);
+        cookies = dtData.cookies || cookies;
+        displayTitle = displayTitle || dtData.title || '';
+        musicTitle = musicTitle || dtData.musicTitle || '';
+      }
+    }
+
+    if (audioCandidates.length === 0) {
+      const tmData = await extractFromTikMate(`https://www.tiktok.com/@a/video/${videoId}`).catch(() => null);
+      if (tmData?.audioUrl) {
+        audioCandidates.push(tmData.audioUrl);
+        displayTitle = displayTitle || tmData.title || '';
+        musicTitle = musicTitle || tmData.musicTitle || '';
+      }
+    }
+
     const cleanTitle = safeUnicodeSlice(musicTitle || displayTitle || 'TikTok Audio', 50) || 'TikTok Audio';
     const { html: htmlCaption, plain: plainCaption } = buildMediaCaption(musicTitle || displayTitle, meta?.author || cached?.author, botTag);
 
     let sentAudio = null;
 
-    // 3a. Try fast URL hotlink first (when not cookie-bound)
+    // 5. Try candidate audio URLs
     for (const audioUrl of uniqueStrings(audioCandidates)) {
+      await tracker.update(70, false);
       if (!cookies) {
+        await tracker.update(100, true);
         sentAudio = await tgCall(token, 'sendAudio', {
           chat_id: chatId,
           audio: audioUrl,
@@ -2391,9 +2436,10 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
         if (sentAudio?.ok) break;
       }
 
-      // 3b. Worker Binary Fetch + Multipart FormData Upload fallback
+      // Worker Binary Fetch + Multipart FormData Upload fallback (for cookie-locked or hotlink-rejected audio)
       const audioBlob = await fetchMediaBlob(audioUrl, 'audio/mpeg', MIN_AUDIO_BYTES, cookies);
       if (audioBlob) {
+        await tracker.update(100, true);
         sentAudio = await uploadAudioMultipart(
           token,
           chatId,
@@ -2408,12 +2454,14 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
       }
     }
 
-    // 3c. If cached audio_url expired, fetch fresh stream once and upload
+    // 6. If cached audio_url expired, fetch fresh stream once and upload
     if (!sentAudio?.ok && cached?.audio_url && !meta) {
-      meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`);
+      await tracker.update(70, false);
+      meta = await extractTikTokData(`https://www.tiktok.com/@a/video/${videoId}`).catch(() => null);
       if (meta?.audioUrl) {
         const freshBlob = await fetchMediaBlob(meta.audioUrl, 'audio/mpeg', MIN_AUDIO_BYTES, meta.cookies);
         if (freshBlob) {
+          await tracker.update(100, true);
           sentAudio = await uploadAudioMultipart(
             token,
             chatId,
@@ -2429,6 +2477,9 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
     }
 
     if (sentAudio?.ok) {
+      if (audioStatusId) {
+        await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: audioStatusId }).catch(() => {});
+      }
       const audioObj = sentAudio.result?.audio || sentAudio.result?.document;
       const audioFileId = audioObj?.file_id;
       const audioUniqueId = audioObj?.file_unique_id;
@@ -2436,17 +2487,55 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
         await db.setCachedAudio(videoId, audioFileId, env, cleanTitle, audioUniqueId);
       }
     } else {
-      await tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: 'Audio is unavailable.'
-      });
+      if (audioStatusId) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: audioStatusId,
+          text: '🎵 Audio not available for this video.',
+          parse_mode: 'HTML'
+        });
+      } else {
+        await tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '🎵 Audio not available for this video.',
+          parse_mode: 'HTML'
+        });
+      }
+      await db.logServerError(
+        cb.from?.id || 0,
+        cb.from?.username ? `@${cb.from.username}` : 'User',
+        `https://www.tiktok.com/@a/video/${videoId}`,
+        'AudioExtractionError',
+        `${cleanTitle} | Audio stream could not be resolved`,
+        'Telegram Audio',
+        env
+      );
     }
   } catch (e) {
     console.error('Audio callback error:', e);
-    await tgCall(token, 'sendMessage', {
-      chat_id: chatId,
-      text: 'Audio is unavailable.'
-    });
+    if (audioStatusId) {
+      await tgCall(token, 'editMessageText', {
+        chat_id: chatId,
+        message_id: audioStatusId,
+        text: '🎵 Audio not available for this video.',
+        parse_mode: 'HTML'
+      });
+    } else {
+      await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '🎵 Audio not available for this video.',
+        parse_mode: 'HTML'
+      });
+    }
+    await db.logServerError(
+      cb.from?.id || 0,
+      cb.from?.username ? `@${cb.from.username}` : 'User',
+      `https://www.tiktok.com/@a/video/${videoId}`,
+      'AudioExtractionError',
+      String(e.message || e).slice(0, 100),
+      'Telegram Audio',
+      env
+    );
   } finally {
     if (releaseAudioLock) {
       releaseAudioLock();

@@ -10,6 +10,9 @@ import * as db from './src/db.js';
 console.log('=== 🧪 Enterprise Test Suite: TikTok Worker (Telegram Hash Forwarding + Multi-Tier Cache) ===\n');
 
 async function runTests() {
+  // Ensure clean test database state
+  await db.saveConnectedChats([], {});
+
   // 1. Health check endpoint test
   const req = new Request('https://worker.test/health');
   const res = await worker.fetch(req, {}, {});
@@ -90,11 +93,17 @@ async function runTests() {
   globalThis.fetch = async (url, opts = {}) => {
     const urlStr = typeof url === 'string' ? url : url.url;
     if (urlStr.includes('api.telegram.org')) {
-      if (urlStr.includes('/getMe') || urlStr.includes('/getChatMember')) {
+      if (urlStr.includes('/getMe')) {
+        return new Response(JSON.stringify({ ok: true, result: { username: 'TheTikTokDownloaderBot' } }));
+      }
+      if (urlStr.includes('/getChatMember')) {
+        let p = null;
+        try { p = JSON.parse(opts.body); } catch {}
+        const isBotCheck = p?.user_id && (String(p.user_id).includes('mock') || String(p.user_id) === 'TheTikTokDownloaderBot');
         return new Response(
           JSON.stringify({
             ok: true,
-            result: { status: 'member', is_member: true, username: 'TheTikTokDownloaderBot' }
+            result: { status: isBotCheck ? 'administrator' : 'member', is_member: true, username: 'TheTikTokDownloaderBot' }
           })
         );
       }
@@ -109,7 +118,7 @@ async function runTests() {
         parsedBody = JSON.parse(opts.body);
       }
 
-      telegramCalls.push({ url: urlStr, isMultipart, payload: parsedBody });
+      telegramCalls.push({ url: urlStr, isMultipart, payload: parsedBody, method: urlStr.split('/').pop() });
 
       // Simulate stale file_id rejection once when requested
       if (!isMultipart && failStaleFileIdOnce && parsedBody?.video === 'stale_bad_file_id_123') {
@@ -295,6 +304,19 @@ async function runTests() {
 
     const audioDelivered = telegramCalls.some((c) => c.url.includes('/sendAudio'));
     if (!audioDelivered) throw new Error('Audio callback failed to deliver MP3');
+
+    // Verify audio answerCallbackQuery was silent (NO toast message)
+    const audioAnswer = telegramCalls.find((c) => c.method === 'answerCallbackQuery' && c.payload?.callback_query_id === 'cb_1');
+    if (audioAnswer?.payload?.text) {
+      throw new Error(`answerCallbackQuery sent unwanted toast popup: "${audioAnswer.payload.text}"`);
+    }
+
+    // Verify audio progress bar was sent and deleted upon delivery
+    const audioProgressSend = telegramCalls.find((c) => c.method === 'sendMessage' && c.payload?.text?.includes('0%'));
+    if (!audioProgressSend) throw new Error('Audio initial 0% progress message was not sent');
+    const audioProgressDelete = telegramCalls.find((c) => c.method === 'deleteMessage' && c.payload?.message_id === 700);
+    if (!audioProgressDelete) throw new Error('Audio status progress message was not deleted upon delivery');
+
     console.log('8. Audio Extraction Callback + Persistent Audio Hash Cache: PASSED');
 
     // 9. Database, User History & Cache Hit Metrics Verification
@@ -373,6 +395,7 @@ async function runTests() {
 
     const updatedSetting = await db.getSetting('force_sub_channel', {});
     if (updatedSetting !== '@SponsorChannel') throw new Error('Admin /setchannel failed to update setting in DB');
+    globalThis.fetch = origSubFetch;
 
     console.log('10. Dynamic Force-Subscription Gate & /setchannel Admin Command: PASSED');
 
@@ -799,6 +822,7 @@ async function runTests() {
     if (directBtn?.text !== '⬇️ Download Video' || directBtn?.url !== 'https://cdn.test/large_video.mp4') {
       throw new Error('>50MB fallback download button URL mismatch');
     }
+    globalThis.fetch = prevFetchForLarge;
     console.log('14. Large Video (>50MB) Direct CDN Download Fallback: PASSED');
 
     // 15. ProgressBarTracker (0% -> 100%), Monotonic Progress, Blockquote Captions, and Cleanup
@@ -906,6 +930,7 @@ async function runTests() {
     const deleteCall = progressCalls.find((c) => c.method === 'deleteMessage' && c.payload?.message_id === 1501);
     if (!deleteCall) throw new Error('Status progress message was not deleted after video delivery');
 
+    globalThis.fetch = prevFetchFor15;
     console.log('15. ProgressBarTracker (0% -> 100%), Monotonic Progress, Blockquote Captions, and Instant Cleanup: PASSED');
 
     // 16. Automatic Bot Membership Tracking (my_chat_member) & Real-time Join Listener (chat_member)
@@ -925,6 +950,9 @@ async function runTests() {
       }
       return prevFetch16(url, opts);
     };
+
+    // Reset connected list before test 16 so limit is not exceeded
+    await db.saveConnectedChats([], {});
 
     // 16a. Non-admin adds bot to a channel -> Bot MUST auto-leave!
     await worker.fetch(
@@ -1009,6 +1037,7 @@ async function runTests() {
     );
     if (!db.isUserVerifiedMemory(realTimeUserId)) throw new Error('chat_member join did not set verified memory in 0ms');
 
+    globalThis.fetch = prevFetch16;
     console.log('16. Automatic Bot Membership Tracking (my_chat_member) & Real-time Join Listener (chat_member): PASSED');
 
     // 17. Group Deep-Link Connection, Group Video Processing & Force-Sub Group Exemption
