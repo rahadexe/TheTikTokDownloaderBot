@@ -1,13 +1,26 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Cloudflare Workers & Secrets
 .wrangler/
 .dev.vars
+.env
+.env.*
+
+# Local Databases & State
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+test.db
 
 # System & Logs
 *.log
-*.sqlite
-*.db
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
 .taste-skill/

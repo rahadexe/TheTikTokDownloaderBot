@@ -369,7 +369,11 @@ export async function incrementUserDownloads(userId, env, details = {}) {
   const now = new Date().toISOString();
 
   const u = memoryStore.users.get(id);
-  if (u) u.downloads_count = (u.downloads_count || 0) + 1;
+  if (u) {
+    u.downloads_count = (u.downloads_count || 0) + 1;
+  } else {
+    setBoundedMap(memoryStore.users, id, { id, downloads_count: 1, created_at: now, last_active_at: now }, MAX_MEM_USERS);
+  }
 
   // Record user's recent 30 downloaded videos/links in L1 + Edge Cache
   if (videoId || sourceUrl) {
@@ -392,7 +396,14 @@ export async function incrementUserDownloads(userId, env, details = {}) {
 
   if (env && env.DB) {
     try {
-      await env.DB.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).bind(id).run();
+      const res = await env.DB.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).bind(id).run();
+      if (!res?.meta?.changes) {
+        await env.DB.prepare(`
+          INSERT INTO users (id, username, first_name, downloads_count, created_at, last_active_at)
+          VALUES (?, '', '', 1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET downloads_count = downloads_count + 1, last_active_at = excluded.last_active_at;
+        `).bind(id, now, now).run().catch(() => {});
+      }
       if (videoId) {
         await env.DB.prepare(
           `INSERT INTO user_downloads (user_id, video_id, source_url, media_type, created_at) VALUES (?, ?, ?, ?, ?)`
@@ -405,7 +416,14 @@ export async function incrementUserDownloads(userId, env, details = {}) {
 
   if (isNodeSqlite && db) {
     try {
-      db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
+      const res = db.prepare(`UPDATE users SET downloads_count = downloads_count + 1 WHERE id = ?`).run(id);
+      if (res?.changes === 0) {
+        db.prepare(`
+          INSERT INTO users (id, username, first_name, downloads_count, created_at, last_active_at)
+          VALUES (?, '', '', 1, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET downloads_count = downloads_count + 1, last_active_at = excluded.last_active_at;
+        `).run(id, now, now);
+      }
       if (videoId) {
         db.prepare(
           `INSERT INTO user_downloads (user_id, video_id, source_url, media_type, created_at) VALUES (?, ?, ?, ?, ?)`
