@@ -6,8 +6,7 @@ import worker, {
   extractFromTikTokDirect,
   extractFromTikMate,
   fetchMediaStream,
-  userActiveUrl,
-  getTikTokTrackKey
+  userActiveJobs
 } from './src/worker.js';
 import * as db from './src/db.js';
 
@@ -1297,10 +1296,10 @@ async function runTests() {
     );
     await Promise.all(multiWait);
 
-    // 19d. Active Duplicate Drop Test: sending same active link while downloading is dropped silently
-    userActiveUrl.set(multiChatId, getTikTokTrackKey('https://www.tiktok.com/@user/video/7692664817294773512'));
-    const dupCallsBefore = multiCalls.length;
-    const dupWait = [];
+    // 19d. User Queue & Instant Feedback Test: sending another link while downloading immediately gets 'In queue...' (never ignored!)
+    userActiveJobs.set(multiChatId, 1);
+    const queueCallsBefore = multiCalls.length;
+    const queueWait = [];
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1316,16 +1315,19 @@ async function runTests() {
         })
       }),
       { BOT_TOKEN: 'mock_token' },
-      { waitUntil: (p) => dupWait.push(p) }
+      { waitUntil: (p) => queueWait.push(p) }
     );
-    await Promise.all(dupWait);
-    userActiveUrl.delete(multiChatId);
-    if (multiCalls.length !== dupCallsBefore) {
-      throw new Error('Active duplicate link should be dropped silently without calling Telegram API');
+    await Promise.all(queueWait);
+    userActiveJobs.delete(multiChatId);
+
+    // Verify immediate 'In queue...' message was sent to Telegram
+    const queuedCall = multiCalls.slice(queueCallsBefore).find((c) => c.payload?.text?.includes('In queue'));
+    if (!queuedCall) {
+      throw new Error('Link sent while busy must immediately receive "In queue..." feedback and never be ignored');
     }
 
     globalThis.fetch = prevFetch19;
-    console.log('19. Strictly Single Link & Active Duplicate Drop & Anti-Spam Flood Shield (10/min): PASSED');
+    console.log('19. Strictly Single Link & User Queue Feedback & Anti-Spam Flood Shield (10/min): PASSED');
 
     console.log('\n🎉 ALL 19 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
 

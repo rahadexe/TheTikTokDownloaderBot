@@ -20,13 +20,31 @@ const inFlightAudioJobs = new Map();
 const userRateLimit = new Map();     // userId -> [timestamps]
 const userSpamCooldown = new Map();  // userId -> cooldownEndTimestamp
 const userLastCooldownWarn = new Map(); // userId -> lastWarningTimestamp
-const userActiveUrl = new Map();     // userId -> trackKey
+export const userActiveJobs = new Map(); // userId -> active job count
+export const userQueueTail = new Map();  // userId -> Promise
 
-export function getTikTokTrackKey(url) {
-  if (!url) return '';
-  const match = String(url).match(/\/video\/(\d+)/i);
-  if (match) return `tt:${match[1]}`;
-  return String(url).trim().toLowerCase().split('?')[0].replace(/\/+$/, '');
+export async function enqueueUserJob(userId, jobFn) {
+  if (!userId) {
+    return jobFn();
+  }
+  const prevPromise = userQueueTail.get(userId);
+  let releaseCurrent;
+  const currentPromise = new Promise((resolve) => {
+    releaseCurrent = resolve;
+  });
+  userQueueTail.set(userId, currentPromise);
+
+  try {
+    if (prevPromise) {
+      await prevPromise.catch(() => {});
+    }
+    return await jobFn();
+  } finally {
+    releaseCurrent();
+    if (userQueueTail.get(userId) === currentPromise) {
+      userQueueTail.delete(userId);
+    }
+  }
 }
 const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
 const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
@@ -1376,10 +1394,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
 
     const singleUrl = groupTikTokUrls[0];
-    const trackKey = getTikTokTrackKey(singleUrl);
-    if (userId && userActiveUrl.get(userId) === trackKey) {
-      return; // Silently drop active duplicate request
-    }
 
     // Anti-Spam Flood Shield (Max 10 links per 60 seconds per user in group)
     const rateLimitResult = checkUserRateLimit(userId, 1);
@@ -1394,37 +1408,60 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       return;
     }
 
-    if (userId) {
-      userActiveUrl.set(userId, trackKey);
-    }
-    try {
-      // Force-Subscribe Verification Gate (Group support with group exemption)
-      if (userId && userId !== adminId) {
-        const isVerified = db.isUserVerifiedMemory(userId);
-        if (!isVerified) {
-          const currentChatId = chatId;
-          const currentChatUname = msg.chat.username ? `@${msg.chat.username}` : null;
-          const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
+    // Force-Subscribe Verification Gate (Group support with group exemption)
+    if (userId && userId !== adminId) {
+      const isVerified = db.isUserVerifiedMemory(userId);
+      if (!isVerified) {
+        const currentChatId = chatId;
+        const currentChatUname = msg.chat.username ? `@${msg.chat.username}` : null;
+        const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
 
-          if (missing.length === 0) {
-            db.setUserVerifiedMemory(userId);
-          } else {
-            db.setPendingLink(userId, { url: singleUrl, chatId });
-            const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
-            return tgCall(token, 'sendMessage', {
-              chat_id: chatId,
-              text: promptText,
-              parse_mode: 'HTML',
-              reply_markup: markup
-            });
-          }
+        if (missing.length === 0) {
+          db.setUserVerifiedMemory(userId);
+        } else {
+          db.setPendingLink(userId, { url: singleUrl, chatId });
+          const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+          return tgCall(token, 'sendMessage', {
+            chat_id: chatId,
+            text: promptText,
+            parse_mode: 'HTML',
+            reply_markup: markup
+          });
         }
       }
+    }
 
-      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx);
+    const isQueued = (userActiveJobs.get(userId) || 0) > 0;
+    userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
+
+    let statusMsgId = null;
+    try {
+      const sm = await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: isQueued ? '⏳ <b>In queue...</b>' : '░░░░░░░░░░ <b>0%</b>',
+        parse_mode: 'HTML'
+      });
+      statusMsgId = sm?.result?.message_id || null;
+    } catch {}
+
+    try {
+      await enqueueUserJob(userId, async () => {
+        if (isQueued && statusMsgId) {
+          await tgCall(token, 'editMessageText', {
+            chat_id: chatId,
+            message_id: statusMsgId,
+            text: '░░░░░░░░░░ <b>0%</b>',
+            parse_mode: 'HTML'
+          }).catch(() => {});
+        }
+        await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId);
+      });
     } finally {
-      if (userId && userActiveUrl.get(userId) === trackKey) {
-        userActiveUrl.delete(userId);
+      const cur = (userActiveJobs.get(userId) || 1) - 1;
+      if (cur <= 0) {
+        userActiveJobs.delete(userId);
+      } else {
+        userActiveJobs.set(userId, cur);
       }
     }
     return;
@@ -1513,10 +1550,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   }
 
   const singleUrl = tiktokUrls[0];
-  const trackKey = getTikTokTrackKey(singleUrl);
-  if (userId && userActiveUrl.get(userId) === trackKey) {
-    return; // Silently drop active duplicate request
-  }
 
   // Anti-Spam Flood Shield (Max 10 links per 60 seconds)
   const rateLimitResult = checkUserRateLimit(userId, 1);
@@ -1535,37 +1568,60 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     adminViewState.set(userId, "MAIN");
   }
 
-  if (userId) {
-    userActiveUrl.set(userId, trackKey);
-  }
-  try {
-    // Force-Subscribe Verification Gate (Shows only unjoined channels)
-    if (userId && userId !== adminId) {
-      const isVerified = db.isUserVerifiedMemory(userId);
-      if (!isVerified) {
-        const currentChatId = isGroup ? chatId : null;
-        const currentChatUname = isGroup && msg.chat.username ? `@${msg.chat.username}` : null;
-        const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
+  // Force-Subscribe Verification Gate (Shows only unjoined channels)
+  if (userId && userId !== adminId) {
+    const isVerified = db.isUserVerifiedMemory(userId);
+    if (!isVerified) {
+      const currentChatId = isGroup ? chatId : null;
+      const currentChatUname = isGroup && msg.chat.username ? `@${msg.chat.username}` : null;
+      const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
 
-        if (missing.length === 0) {
-          db.setUserVerifiedMemory(userId);
-        } else {
-          db.setPendingLink(userId, { url: singleUrl, chatId });
-          const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
-          return tgCall(token, "sendMessage", {
-            chat_id: chatId,
-            text: promptText,
-            parse_mode: "HTML",
-            reply_markup: markup
-          });
-        }
+      if (missing.length === 0) {
+        db.setUserVerifiedMemory(userId);
+      } else {
+        db.setPendingLink(userId, { url: singleUrl, chatId });
+        const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+        return tgCall(token, "sendMessage", {
+          chat_id: chatId,
+          text: promptText,
+          parse_mode: "HTML",
+          reply_markup: markup
+        });
       }
     }
+  }
 
-    await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx);
+  const isQueued = (userActiveJobs.get(userId) || 0) > 0;
+  userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
+
+  let statusMsgId = null;
+  try {
+    const sm = await tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: isQueued ? '⏳ <b>In queue...</b>' : '░░░░░░░░░░ <b>0%</b>',
+      parse_mode: 'HTML'
+    });
+    statusMsgId = sm?.result?.message_id || null;
+  } catch {}
+
+  try {
+    await enqueueUserJob(userId, async () => {
+      if (isQueued && statusMsgId) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: statusMsgId,
+          text: '░░░░░░░░░░ <b>0%</b>',
+          parse_mode: 'HTML'
+        }).catch(() => {});
+      }
+      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId);
+    });
   } finally {
-    if (userId && userActiveUrl.get(userId) === trackKey) {
-      userActiveUrl.delete(userId);
+    const cur = (userActiveJobs.get(userId) || 1) - 1;
+    if (cur <= 0) {
+      userActiveJobs.delete(userId);
+    } else {
+      userActiveJobs.set(userId, cur);
     }
   }
 }
@@ -3247,7 +3303,6 @@ function escapeHtml(str) {
 }
 
 export {
-  userActiveUrl,
   handleUpdate,
   extractTikTokData,
   extractFromTikWM,
