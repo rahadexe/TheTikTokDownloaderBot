@@ -1,6 +1,7 @@
 import worker, {
   extractTikTokUrl,
   extractAllTikTokUrls,
+  checkUserRateLimit,
   extractFromTikWM,
   extractFromTikTokDirect,
   extractFromTikMate,
@@ -1203,10 +1204,30 @@ async function runTests() {
     globalThis.fetch = prevFetch18;
     console.log('18. Automated Bot Commands (/start), Profile & Menu Button Auto-Sync (/setup & /setWebhook): PASSED');
 
-    // 19. Multi-Link Extractor & Rapid Concurrency Limiter Verification
+    // 19. Multi-Link Extractor (up to 5) & Anti-Spam Flood Shield Verification
     const multiUrls = extractAllTikTokUrls('Check: https://www.tiktok.com/@user/video/111 and vt.tiktok.com/ZSgQuVgCe/ and vt.tiktok.com/ZSgQuVgCe/');
     if (multiUrls.length !== 2) throw new Error('extractAllTikTokUrls failed to extract and deduplicate multiple links');
 
+    // 19a. Verify default limit extracts up to 5 links
+    const fiveUrls = extractAllTikTokUrls(Array.from({ length: 8 }, (_, i) => `https://www.tiktok.com/@user/video/700000000000000000${i}`).join(' '));
+    if (fiveUrls.length !== 5) throw new Error(`extractAllTikTokUrls default limit should be 5, got ${fiveUrls.length}`);
+
+    // 19b. Verify Anti-Spam Flood Shield unit logic (10 links/min, 11th triggers warning, 12th silent drop)
+    const testSpamUser = 77112233;
+    for (let i = 0; i < 5; i++) {
+      const res = checkUserRateLimit(testSpamUser, 2);
+      if (res.blocked) throw new Error(`Rate limit unexpectedly blocked user at count ${i * 2}`);
+    }
+    const res11 = checkUserRateLimit(testSpamUser, 1);
+    if (!res11.blocked || !res11.warning?.includes('Too many requests')) {
+      throw new Error('11th link should trigger Too many requests cooldown warning');
+    }
+    const res12 = checkUserRateLimit(testSpamUser, 1);
+    if (!res12.blocked || res12.warning !== null) {
+      throw new Error('12th link during cooldown must be silently dropped (warning === null)');
+    }
+
+    // 19c. Webhook integration test for 2 links in a single message
     const multiCalls = [];
     const prevFetch19 = globalThis.fetch;
     globalThis.fetch = async (url, opts = {}) => {
@@ -1225,7 +1246,6 @@ async function runTests() {
     const multiChatId = 88776655;
     db.setUserVerifiedMemory(multiChatId);
 
-    // 19a. Send 2 links in a single message -> both should be processed sequentially
     const multiWait = [];
     await worker.fetch(
       new Request('https://worker.test/webhook', {
@@ -1246,86 +1266,8 @@ async function runTests() {
     );
     await Promise.all(multiWait);
 
-    // 19b. Rapid second message sent while user has active job -> receives English wait message
-    const rapidCalls = [];
-    let resolveActive = null;
-    const activeWaitPromise = new Promise((res) => { resolveActive = res; });
-
-    // Simulate an ongoing long download by artificially locking user or holding fetch
-    const prevFetchRapid = globalThis.fetch;
-    globalThis.fetch = async (url, opts = {}) => {
-      const urlStr = typeof url === 'string' ? url : url.url;
-      if (urlStr.includes('api.telegram.org')) {
-        let parsed = null;
-        if (opts.body && typeof opts.body === 'string') {
-          try { parsed = JSON.parse(opts.body); } catch {}
-        }
-        rapidCalls.push({ method: urlStr.split('/').pop(), payload: parsed });
-        if (urlStr.includes('sendMessage') && parsed?.text?.includes('0%')) {
-          // Pause here so activeUserJobs lock is active
-          await activeWaitPromise;
-        }
-        return new Response(JSON.stringify({ ok: true, result: { message_id: 1902 } }));
-      }
-      return prevFetchRapid(url, opts);
-    };
-
-    const rapidChatId = 99112233;
-    db.setUserVerifiedMemory(rapidChatId);
-
-    const firstJobWait = [];
-    const firstJobPromise = worker.fetch(
-      new Request('https://worker.test/webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          update_id: baseUid + 41,
-          message: {
-            message_id: 1903,
-            chat: { id: rapidChatId, type: 'private' },
-            from: { id: rapidChatId, first_name: 'RapidUser' },
-            text: 'https://www.tiktok.com/@user/video/7692664817294773512'
-          }
-        })
-      }),
-      { BOT_TOKEN: 'mock_token' },
-      { waitUntil: (p) => firstJobWait.push(p) }
-    );
-
-    // Allow first job to acquire lock
-    await new Promise((r) => setTimeout(r, 50));
-
-    // Second rapid message arrives while first job is running
-    const secondWait = [];
-    await worker.fetch(
-      new Request('https://worker.test/webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          update_id: baseUid + 42,
-          message: {
-            message_id: 1904,
-            chat: { id: rapidChatId, type: 'private' },
-            from: { id: rapidChatId, first_name: 'RapidUser' },
-            text: 'https://www.tiktok.com/@user/video/7692664817294773512'
-          }
-        })
-      }),
-      { BOT_TOKEN: 'mock_token' },
-      { waitUntil: (p) => secondWait.push(p) }
-    );
-    await Promise.all(secondWait);
-
-    // Release first job
-    resolveActive();
-    await firstJobPromise;
-    await Promise.all(firstJobWait);
-
-    const waitPrompt = rapidCalls.find((c) => c.method === 'sendMessage' && c.payload?.text?.includes('Your previous video is still processing'));
-    if (!waitPrompt) throw new Error('Rapid concurrent message did not receive English wait notice');
-
     globalThis.fetch = prevFetch19;
-    console.log('19. Multi-Link Processing (2 links in 1 message) & Rapid Concurrency Limiter: PASSED');
+    console.log('19. Multi-Link Processing (5 links limit) & Anti-Spam Flood Shield (10/min): PASSED');
 
     console.log('\n🎉 ALL 19 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
 

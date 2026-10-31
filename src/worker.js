@@ -17,7 +17,34 @@ const MIN_IMAGE_BYTES = 1024;
 // In-flight singleflight locks (prevents duplicate Worker uploads when multiple users send the same viral video simultaneously)
 const inFlightVideoJobs = new Map();
 const inFlightAudioJobs = new Map();
-const activeUserJobs = new Map();
+const userRateLimit = new Map();     // userId -> [timestamps]
+const userSpamCooldown = new Map();  // userId -> cooldownEndTimestamp
+const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
+const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
+
+export function checkUserRateLimit(userId, numLinks = 1) {
+  if (!userId) return { blocked: false, warning: null };
+  const now = Date.now();
+  const cooldownUntil = userSpamCooldown.get(userId) || 0;
+  if (now < cooldownUntil) {
+    return { blocked: true, warning: null }; // Silent drop during cooldown
+  }
+  let history = userRateLimit.get(userId) || [];
+  history = history.filter(t => now - t < RATE_LIMIT_WINDOW);
+  if (history.length + numLinks > RATE_LIMIT_MAX_LINKS) {
+    userSpamCooldown.set(userId, now + RATE_LIMIT_WINDOW);
+    userRateLimit.set(userId, history);
+    return {
+      blocked: true,
+      warning: "⚠️ <b>Too many requests:</b> Please slow down. You can send new links again after 1 minute."
+    };
+  }
+  for (let i = 0; i < numLinks; i++) {
+    history.push(now);
+  }
+  userRateLimit.set(userId, history);
+  return { blocked: false, warning: null };
+}
 
 /**
  * Lightweight 1-hop short-link redirect resolver (0.08s HEAD hop):
@@ -1383,8 +1410,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  // Detect TikTok link(s)
-  const tiktokUrls = extractAllTikTokUrls(text, 3);
+  // Detect TikTok link(s) (supports up to 5 links in one message)
+  const tiktokUrls = extractAllTikTokUrls(text, 5);
   if (tiktokUrls.length === 0) {
     if (msg.chat?.type === "private" && !text.startsWith("/")) {
       const anyUrl = /https?:\/\/[^\s]+/i.test(text);
@@ -1403,16 +1430,17 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
-  // Per-user rapid spam / concurrent download limiter (Private chats only)
-  if (!isGroup && activeUserJobs.has(userId)) {
-    const activeSince = activeUserJobs.get(userId) || 0;
-    if (Date.now() - activeSince < 45000) {
+  // Anti-Spam Flood Shield (Max 10 links per 60 seconds)
+  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length);
+  if (rateLimitResult.blocked) {
+    if (rateLimitResult.warning) {
       return tgCall(token, "sendMessage", {
         chat_id: chatId,
-        text: "⏳ <b>Please wait:</b> Your previous video is still processing. Please wait a few seconds.",
+        text: rateLimitResult.warning,
         parse_mode: "HTML"
       });
     }
+    return;
   }
 
   if (isAdminUser) {
@@ -1442,14 +1470,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
   }
 
-  // Acquire active job lock for user and process links sequentially
-  activeUserJobs.set(userId, Date.now());
-  try {
-    for (const link of tiktokUrls) {
-      await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
-    }
-  } finally {
-    activeUserJobs.delete(userId);
+  // Process up to 5 links sequentially with zero-noise
+  for (const link of tiktokUrls) {
+    await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
   }
 }
 
@@ -2980,7 +3003,7 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
  * URL Extractor, Validator & Sanitizer
  * Supports schemeless links (vt.tiktok.com/...), strips attached emojis/punctuation, and rejects non-media profile/discover pages
  */
-export function extractAllTikTokUrls(text, limit = 3) {
+export function extractAllTikTokUrls(text, limit = 5) {
   if (!text || typeof text !== "string") return [];
   const regex = /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/gi;
   const matches = text.match(regex);
