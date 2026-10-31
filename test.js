@@ -251,6 +251,9 @@ async function runTests() {
     if (uploadsAfterSecond !== uploadsBeforeSecond || lastVideoForward?.payload?.video !== 'BAACAgUAAxkBAA_FRESH_TG_HASH_999') {
       throw new Error('Instant Telegram file_id hash forwarding failed on repeat video!');
     }
+    if (lastVideoForward?.payload?.reply_to_message_id !== 51 || !lastVideoForward?.payload?.allow_sending_without_reply) {
+      throw new Error('sendVideo missing reply_to_message_id or allow_sending_without_reply on cached delivery');
+    }
     console.log('6. Repeat Video Request -> Zero-Upload Instant Telegram Hash Forward (<0.1s): PASSED');
 
     // 7. Brand-New Short Link (`vt.tiktok.com/...`) 1-Hop Pre-Scrape Resolution Test
@@ -924,6 +927,9 @@ async function runTests() {
     // Verify blockquote caption on delivered video
     const sentVideoCall = progressCalls.find((c) => c.method === 'sendVideo');
     if (!sentVideoCall) throw new Error('sendVideo was not called');
+    if (String(sentVideoCall.payload?.reply_to_message_id) !== '1500' || String(sentVideoCall.payload?.allow_sending_without_reply) !== 'true') {
+      throw new Error('sendVideo in test 15 missing reply_to_message_id=1500 or allow_sending_without_reply=true');
+    }
     const caption = sentVideoCall.payload?.caption || '';
     if (!caption.includes('<blockquote><b>Test Progress &amp; Caption Video</b></blockquote>')) {
       throw new Error(`Video caption missing blockquote formatting: got "${caption}"`);
@@ -1138,6 +1144,9 @@ async function runTests() {
     await Promise.all(waitGrpVid);
     const grpVidDelivery = groupCalls.find((c) => c.method === 'sendVideo' && c.payload?.chat_id === groupId);
     if (!grpVidDelivery) throw new Error('Video was not delivered inside the group');
+    if (grpVidDelivery.payload?.reply_to_message_id !== 1705 || !grpVidDelivery.payload?.allow_sending_without_reply) {
+      throw new Error('Group sendVideo missing reply_to_message_id=1705 or allow_sending_without_reply=true');
+    }
 
     // 17c. In-group non-TikTok message / links (e.g. Facebook, YouTube, chat) -> Bot remains 100% SILENT
     const preCount = groupCalls.length;

@@ -1419,7 +1419,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         if (missing.length === 0) {
           db.setUserVerifiedMemory(userId);
         } else {
-          db.setPendingLink(userId, { url: singleUrl, chatId });
+          db.setPendingLink(userId, { url: singleUrl, chatId, replyToMsgId: msg.message_id });
           const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
           return tgCall(token, 'sendMessage', {
             chat_id: chatId,
@@ -1454,7 +1454,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
             parse_mode: 'HTML'
           }).catch(() => {});
         }
-        await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId);
+        await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
       });
     } finally {
       const cur = (userActiveJobs.get(userId) || 1) - 1;
@@ -1579,7 +1579,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       if (missing.length === 0) {
         db.setUserVerifiedMemory(userId);
       } else {
-        db.setPendingLink(userId, { url: singleUrl, chatId });
+        db.setPendingLink(userId, { url: singleUrl, chatId, replyToMsgId: msg.message_id });
         const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
         return tgCall(token, "sendMessage", {
           chat_id: chatId,
@@ -1614,7 +1614,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           parse_mode: 'HTML'
         }).catch(() => {});
       }
-      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId);
+      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
     });
   } finally {
     const cur = (userActiveJobs.get(userId) || 1) - 1;
@@ -1726,7 +1726,7 @@ export class ProgressBarTracker {
 /**
  * Core TikTok Download & Delivery Runner
  */
-async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ctx, statusMsgId = null) {
+async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ctx, statusMsgId = null, replyToMsgId = null) {
   const botTag = await getBotTag(token);
 
   let activeStatusId = statusMsgId;
@@ -1775,7 +1775,8 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
         safeTitle,
         botTag,
         cached.video_id || directId,
-        cached
+        cached,
+        replyToMsgId
       );
       if (sent?.ok) {
         if (activeStatusId) {
@@ -1812,7 +1813,8 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
           audioUrl: cached.audio_url || cached.audio_file_id
         },
         safeTitle,
-        botTag
+        botTag,
+        replyToMsgId
       );
       if (cachedPhotoRes?.delivered) {
         if (activeStatusId) {
@@ -1878,7 +1880,8 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
           safeTitle,
           botTag,
           data.id,
-          cached
+          cached,
+          replyToMsgId
         );
         if (cachedSent?.ok) {
           if (activeStatusId) {
@@ -1907,7 +1910,7 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
     if (data.isPhoto && Array.isArray(data.images) && data.images.length > 0) {
       await tracker.update(100, true);
       await tgCall(token, 'sendChatAction', { chat_id: chatId, action: 'upload_photo' });
-      const photoRes = await deliverPhotoPost(token, chatId, data, safeTitle, botTag);
+      const photoRes = await deliverPhotoPost(token, chatId, data, safeTitle, botTag, replyToMsgId);
       if (photoRes?.delivered) {
         if (activeStatusId) {
           await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: activeStatusId }).catch(() => {});
@@ -1938,7 +1941,7 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
 
     // Deliver Video: Stage 1 (Fast CDN Hotlink <=19MB) -> Stage 2 (Worker Binary Upload to Telegram <=49MB + Document Fallback) -> Stage 3 (Fresh Engine Re-Extract)
     await tracker.update(50, true);
-    const delivery = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl, tracker);
+    const delivery = await deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, tiktokUrl, tracker, replyToMsgId);
 
     if (delivery?.sent?.ok) {
       await tracker.update(100, true);
@@ -1990,7 +1993,8 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
         chat_id: chatId,
         text: '<b>File is larger than 50MB</b>\n\n<blockquote>Please download directly below:</blockquote>',
         parse_mode: 'HTML',
-        reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined
+        reply_markup: buttons.length ? { inline_keyboard: buttons } : undefined,
+        ...(replyToMsgId ? { reply_to_message_id: replyToMsgId, allow_sending_without_reply: true } : {})
       });
       return;
     } else {
@@ -2054,7 +2058,7 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
  * 2) Direct Worker Fetch (with Referer + Cookies + MP4 dimension parser) -> Multipart FormData Binary Upload (up to 49MB)
  * 3) Self-healing fresh scrape via Direct TikTok / TikMate if primary CDN links expired
  */
-async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, originalUrl, tracker = null) {
+async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag, originalUrl, tracker = null, replyToMsgId = null) {
   let sent = null;
   let sawTooLarge = Boolean(
     data.sizeBytes && data.sizeBytes > MAX_UPLOAD_BYTES && (!data.hdSizeBytes || data.hdSizeBytes > MAX_UPLOAD_BYTES)
@@ -2066,7 +2070,7 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
   if (canHotlink) {
     const hotlinkCandidates = uniqueStrings([data.videoUrl, data.tikwmProxyUrl, data.fallbackUrl]);
     for (const candidateUrl of hotlinkCandidates.slice(0, 2)) {
-      sent = await sendVideoByIdOrUrl(token, chatId, candidateUrl, safeTitle, botTag, data.id, data);
+      sent = await sendVideoByIdOrUrl(token, chatId, candidateUrl, safeTitle, botTag, data.id, data, replyToMsgId);
       if (sent?.ok) {
         if (tracker) await tracker.update(100, true);
         return { sent, meta: data, tooLarge: false };
@@ -2100,7 +2104,7 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
       height: data.height || media.dims?.height
     };
 
-    sent = await uploadVideoMultipart(token, chatId, media.blob, safeTitle, botTag, data.id, enrichedMeta);
+    sent = await uploadVideoMultipart(token, chatId, media.blob, safeTitle, botTag, data.id, enrichedMeta, replyToMsgId);
     if (sent?.ok) {
       if (tracker) await tracker.update(100, true);
       return { sent, meta: enrichedMeta, tooLarge: false };
@@ -2129,7 +2133,8 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
           safeTitle,
           botTag,
           data.id || directData.id,
-          enrichedMeta
+          enrichedMeta,
+          replyToMsgId
         );
         if (sent?.ok) {
           if (tracker) await tracker.update(100, true);
@@ -2160,7 +2165,8 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
             safeTitle,
             botTag,
             data.id || tmData.id,
-            enrichedMeta
+            enrichedMeta,
+            replyToMsgId
           );
           if (sent?.ok) {
             if (tracker) await tracker.update(100, true);
@@ -2174,7 +2180,7 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
   return { sent, meta: data, tooLarge: sawTooLarge };
 }
 
-async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, videoId, meta = {}) {
+async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, videoId, meta = {}, replyToMsgId = null) {
   const { html: htmlCaption, plain: plainCaption } = buildMediaCaption(safeTitle, meta.author || meta.authorHandle, botTag);
   const inlineKeyboard = videoId
     ? [[{ text: '🎵 Download Audio', callback_data: `audio_${videoId}` }]]
@@ -2187,7 +2193,8 @@ async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, vi
     ...(meta.width ? { width: Number(meta.width) } : {}),
     ...(meta.height ? { height: Number(meta.height) } : {}),
     ...(meta.duration ? { duration: Math.round(Number(meta.duration)) } : {}),
-    ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {})
+    ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {}),
+    ...(replyToMsgId ? { reply_to_message_id: replyToMsgId, allow_sending_without_reply: true } : {})
   };
 
   let sent = await tgCall(token, 'sendVideo', {
@@ -2206,7 +2213,7 @@ async function sendVideoByIdOrUrl(token, chatId, videoRef, safeTitle, botTag, vi
   return sent;
 }
 
-async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag, videoId, meta = {}) {
+async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag, videoId, meta = {}, replyToMsgId = null) {
   const { html: htmlCaption, plain: plainCaption } = buildMediaCaption(safeTitle, meta.author || meta.authorHandle, botTag);
   const replyMarkup = videoId
     ? JSON.stringify({ inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${videoId}` }]] })
@@ -2225,6 +2232,10 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
       if (meta.duration) fd.append('duration', String(Math.round(meta.duration)));
     }
     if (replyMarkup) fd.append('reply_markup', replyMarkup);
+    if (replyToMsgId) {
+      fd.append('reply_to_message_id', String(replyToMsgId));
+      fd.append('allow_sending_without_reply', 'true');
+    }
     return fd;
   };
 
@@ -2242,7 +2253,7 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
 /**
  * Deliver TikTok Photo / Slideshow Carousel Posts + extract Telegram photo file_id hashes for instant caching!
  */
-async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
+async function deliverPhotoPost(token, chatId, data, safeTitle, botTag, replyToMsgId = null) {
   const images = data.images.filter(Boolean);
   if (images.length === 0) return { delivered: false, photoFileIds: [] };
 
@@ -2261,7 +2272,8 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
       photo: images[0],
       caption: htmlCaption,
       parse_mode: 'HTML',
-      ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {})
+      ...(inlineKeyboard ? { reply_markup: { inline_keyboard: inlineKeyboard } } : {}),
+      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId, allow_sending_without_reply: true } : {})
     });
 
     if (!sent?.ok && /^https?:\/\//i.test(images[0])) {
@@ -2272,6 +2284,10 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
         fd.append('photo', imgBlob, 'photo.jpg');
         fd.append('caption', plainCaption);
         if (inlineKeyboard) fd.append('reply_markup', JSON.stringify({ inline_keyboard: inlineKeyboard }));
+        if (replyToMsgId) {
+          fd.append('reply_to_message_id', String(replyToMsgId));
+          fd.append('allow_sending_without_reply', 'true');
+        }
         sent = await tgCallMultipart(token, 'sendPhoto', fd);
       }
     }
@@ -2293,7 +2309,8 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
 
     let groupSent = await tgCall(token, 'sendMediaGroup', {
       chat_id: chatId,
-      media: mediaPayload
+      media: mediaPayload,
+      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId, allow_sending_without_reply: true } : {})
     });
 
     if (!groupSent?.ok && chunk.every((u) => /^https?:\/\//i.test(u))) {
@@ -2317,6 +2334,10 @@ async function deliverPhotoPost(token, chatId, data, safeTitle, botTag) {
           };
         });
         fd.append('media', JSON.stringify(attachMedia));
+        if (replyToMsgId) {
+          fd.append('reply_to_message_id', String(replyToMsgId));
+          fd.append('allow_sending_without_reply', 'true');
+        }
         groupSent = await tgCallMultipart(token, 'sendMediaGroup', fd);
       }
     }
@@ -2406,6 +2427,7 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
     });
 
     const pendingUrl = typeof pendingInfo === 'string' ? pendingInfo : pendingInfo?.url;
+    const pendingReplyId = typeof pendingInfo === 'object' ? pendingInfo?.replyToMsgId : null;
     db.clearPendingLink(userId);
 
     if (pendingUrl) {
@@ -2417,7 +2439,7 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
           parse_mode: 'HTML'
         }).catch(() => {});
       }
-      return processTikTokDownload(pendingUrl, chatId, cb.from, token, env, ctx, cb.message?.message_id);
+      return processTikTokDownload(pendingUrl, chatId, cb.from, token, env, ctx, cb.message?.message_id, pendingReplyId);
     } else {
       if (cb.message?.message_id) {
         await tgCall(token, 'editMessageText', {
