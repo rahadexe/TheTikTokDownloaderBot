@@ -34,7 +34,7 @@ export function checkUserRateLimit(userId, numLinks = 1) {
       userLastCooldownWarn.set(userId, now);
       return {
         blocked: true,
-        warning: `⏳ <b>Cooldown:</b> Please wait <b>${remainingSec}s</b>.`
+        warning: `⏳ Try again in <b>${remainingSec}s</b>`
       };
     }
     return { blocked: true, warning: null }; // Throttled to avoid Telegram spam
@@ -47,7 +47,7 @@ export function checkUserRateLimit(userId, numLinks = 1) {
     userRateLimit.set(userId, history);
     return {
       blocked: true,
-      warning: "⚠️ <b>Limit reached:</b> Please wait <b>60s</b>."
+      warning: "⏳ Try again in <b>60s</b>"
     };
   }
   for (let i = 0; i < numLinks; i++) {
