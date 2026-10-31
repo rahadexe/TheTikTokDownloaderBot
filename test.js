@@ -1222,9 +1222,10 @@ async function runTests() {
     if (!res11.blocked || !res11.warning?.includes('Too many requests')) {
       throw new Error('11th link should trigger Too many requests cooldown warning');
     }
+    // 12th link during cooldown immediately is throttled (silent)
     const res12 = checkUserRateLimit(testSpamUser, 1);
     if (!res12.blocked || res12.warning !== null) {
-      throw new Error('12th link during cooldown must be silently dropped (warning === null)');
+      throw new Error('12th link within 3s must be throttled');
     }
 
     // 19c. Webhook integration test for 2 links in a single message

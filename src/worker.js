@@ -19,6 +19,7 @@ const inFlightVideoJobs = new Map();
 const inFlightAudioJobs = new Map();
 const userRateLimit = new Map();     // userId -> [timestamps]
 const userSpamCooldown = new Map();  // userId -> cooldownEndTimestamp
+const userLastCooldownWarn = new Map(); // userId -> lastWarningTimestamp
 const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
 const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
 
@@ -27,12 +28,22 @@ export function checkUserRateLimit(userId, numLinks = 1) {
   const now = Date.now();
   const cooldownUntil = userSpamCooldown.get(userId) || 0;
   if (now < cooldownUntil) {
-    return { blocked: true, warning: null }; // Silent drop during cooldown
+    const remainingSec = Math.max(1, Math.ceil((cooldownUntil - now) / 1000));
+    const lastWarn = userLastCooldownWarn.get(userId) || 0;
+    if (now - lastWarn >= 3000) {
+      userLastCooldownWarn.set(userId, now);
+      return {
+        blocked: true,
+        warning: `⏳ <b>Cooldown active:</b> Please wait <b>${remainingSec}s</b> before sending new links.`
+      };
+    }
+    return { blocked: true, warning: null }; // Throttled to avoid Telegram spam
   }
   let history = userRateLimit.get(userId) || [];
   history = history.filter(t => now - t < RATE_LIMIT_WINDOW);
   if (history.length + numLinks > RATE_LIMIT_MAX_LINKS) {
     userSpamCooldown.set(userId, now + RATE_LIMIT_WINDOW);
+    userLastCooldownWarn.set(userId, now);
     userRateLimit.set(userId, history);
     return {
       blocked: true,
