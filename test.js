@@ -1219,7 +1219,7 @@ async function runTests() {
       if (res.blocked) throw new Error(`Rate limit unexpectedly blocked user at count ${i * 2}`);
     }
     const res11 = checkUserRateLimit(testSpamUser, 1);
-    if (!res11.blocked || !res11.warning?.includes('Limit reached')) {
+    if (!res11.blocked || !res11.warning?.includes('Back in')) {
       throw new Error('11th link should trigger Too many requests cooldown warning');
     }
     // 12th link during cooldown immediately is throttled (silent)
