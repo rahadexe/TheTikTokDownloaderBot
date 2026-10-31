@@ -17,6 +17,7 @@ const MIN_IMAGE_BYTES = 1024;
 // In-flight singleflight locks (prevents duplicate Worker uploads when multiple users send the same viral video simultaneously)
 const inFlightVideoJobs = new Map();
 const inFlightAudioJobs = new Map();
+const activeUserJobs = new Map();
 
 /**
  * Lightweight 1-hop short-link redirect resolver (0.08s HEAD hop):
@@ -1382,28 +1383,40 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  // Detect TikTok link
-  const tiktokUrl = extractTikTokUrl(text);
-  if (!tiktokUrl) {
-    if (msg.chat?.type === 'private' && !text.startsWith('/')) {
+  // Detect TikTok link(s)
+  const tiktokUrls = extractAllTikTokUrls(text, 3);
+  if (tiktokUrls.length === 0) {
+    if (msg.chat?.type === "private" && !text.startsWith("/")) {
       const anyUrl = /https?:\/\/[^\s]+/i.test(text);
       if (anyUrl) {
-        return tgCall(token, 'sendMessage', {
+        return tgCall(token, "sendMessage", {
           chat_id: chatId,
-          text: '⚠️ Invalid video link.'
+          text: "⚠️ Invalid video link."
         });
       } else {
-        return tgCall(token, 'sendMessage', {
+        return tgCall(token, "sendMessage", {
           chat_id: chatId,
-          text: '🔗 Send a TikTok link.'
+          text: "🔗 Send a TikTok link."
         });
       }
     }
     return;
   }
 
+  // Per-user rapid spam / concurrent download limiter (Private chats only)
+  if (!isGroup && activeUserJobs.has(userId)) {
+    const activeSince = activeUserJobs.get(userId) || 0;
+    if (Date.now() - activeSince < 45000) {
+      return tgCall(token, "sendMessage", {
+        chat_id: chatId,
+        text: "⏳ <b>Please wait:</b> Your previous video is still processing. Please wait a few seconds.",
+        parse_mode: "HTML"
+      });
+    }
+  }
+
   if (isAdminUser) {
-    adminViewState.set(userId, 'MAIN');
+    adminViewState.set(userId, "MAIN");
   }
 
   // Force-Subscribe Verification Gate (Shows only unjoined channels)
@@ -1417,19 +1430,27 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       if (missing.length === 0) {
         db.setUserVerifiedMemory(userId);
       } else {
-        db.setPendingLink(userId, { url: tiktokUrl, chatId });
+        db.setPendingLink(userId, { url: tiktokUrls[0], chatId });
         const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
-        return tgCall(token, 'sendMessage', {
+        return tgCall(token, "sendMessage", {
           chat_id: chatId,
           text: promptText,
-          parse_mode: 'HTML',
+          parse_mode: "HTML",
           reply_markup: markup
         });
       }
     }
   }
 
-  return processTikTokDownload(tiktokUrl, chatId, msg.from, token, env, ctx);
+  // Acquire active job lock for user and process links sequentially
+  activeUserJobs.set(userId, Date.now());
+  try {
+    for (const link of tiktokUrls) {
+      await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
+    }
+  } finally {
+    activeUserJobs.delete(userId);
+  }
 }
 
 
@@ -2959,6 +2980,25 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
  * URL Extractor, Validator & Sanitizer
  * Supports schemeless links (vt.tiktok.com/...), strips attached emojis/punctuation, and rejects non-media profile/discover pages
  */
+export function extractAllTikTokUrls(text, limit = 3) {
+  if (!text || typeof text !== "string") return [];
+  const regex = /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/gi;
+  const matches = text.match(regex);
+  if (!matches) return [];
+
+  const found = [];
+  const seen = new Set();
+  for (const m of matches) {
+    const single = extractTikTokUrl(m);
+    if (single && !seen.has(single)) {
+      seen.add(single);
+      found.push(single);
+      if (found.length >= limit) break;
+    }
+  }
+  return found;
+}
+
 function extractTikTokUrl(text) {
   if (!text || typeof text !== 'string') return null;
 
