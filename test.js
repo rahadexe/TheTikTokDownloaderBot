@@ -801,7 +801,115 @@ async function runTests() {
     }
     console.log('14. Large Video (>50MB) Direct CDN Download Fallback: PASSED');
 
-    console.log('\n🎉 ALL 14 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 15. ProgressBarTracker (0% -> 100%), Monotonic Progress, Blockquote Captions, and Cleanup
+    const progressCalls = [];
+    const test15ChatId = 11223344;
+    const test15VidId = '8887776665554443322';
+    const test15Url = `https://www.tiktok.com/@user/video/${test15VidId}`;
+
+    const prevFetchFor15 = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body instanceof FormData) {
+          parsed = {};
+          for (const [k, v] of opts.body.entries()) {
+            parsed[k] = v instanceof Blob ? `[Blob ${v.size}B]` : v;
+          }
+        } else if (opts.body) {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        progressCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        if (urlStr.includes('/sendMessage')) {
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 1501 } }));
+        }
+        if (urlStr.includes('/sendVideo')) {
+          return new Response(JSON.stringify({
+            ok: true,
+            result: {
+              message_id: 1502,
+              video: { file_id: 'BAACAgUAAxkBAA_TEST15_HASH', file_unique_id: 'AgAD_TEST15_UNIQ' }
+            }
+          }));
+        }
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+
+      if (urlStr.includes('tikwm.com') || urlStr.includes('api.tikmate.app')) {
+        return new Response(JSON.stringify({
+          code: 0,
+          msg: 'success',
+          data: {
+            id: test15VidId,
+            title: 'Test Progress & Caption Video',
+            play: 'https://cdn.test/progress_video.mp4',
+            music: 'https://cdn.test/progress_audio.mp3',
+            size: 10485760
+          }
+        }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (urlStr.includes('progress_video.mp4')) {
+        return new Response(new Uint8Array(2048), {
+          headers: { 'Content-Type': 'video/mp4', 'Content-Length': '2048' }
+        });
+      }
+
+      return prevFetchFor15(url, opts);
+    };
+
+    db.setUserVerifiedMemory(test15ChatId);
+    const wait15 = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 20,
+          message: {
+            message_id: 1500,
+            chat: { id: test15ChatId, type: 'private' },
+            from: { id: test15ChatId, first_name: 'ProgTester' },
+            text: test15Url
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' },
+      { waitUntil: (p) => wait15.push(p) }
+    );
+    await Promise.all(wait15);
+
+    // Verify 0% initial message
+    const initialSend = progressCalls.find((c) => c.method === 'sendMessage' && c.payload?.text?.includes('0%'));
+    if (!initialSend) throw new Error('Initial 0% progress message was not sent');
+
+    // Verify progress edits occurred
+    const progressEdits = progressCalls.filter((c) => c.method === 'editMessageText' && c.payload?.text?.includes('%'));
+    if (progressEdits.length === 0) throw new Error('Progress percentage edits were not dispatched');
+
+    // Verify blockquote caption on delivered video
+    const sentVideoCall = progressCalls.find((c) => c.method === 'sendVideo');
+    if (!sentVideoCall) throw new Error('sendVideo was not called');
+    const caption = sentVideoCall.payload?.caption || '';
+    if (!caption.includes('<blockquote><b>Test Progress &amp; Caption Video</b></blockquote>')) {
+      throw new Error(`Video caption missing blockquote formatting: got "${caption}"`);
+    }
+    if (!caption.includes('@TheTikTokDownloaderBot')) {
+      throw new Error(`Video caption missing bot username: got "${caption}"`);
+    }
+    if (caption.includes('♥') || caption.includes('❤')) {
+      throw new Error(`Video caption contains prohibited heart emoji: "${caption}"`);
+    }
+
+    // Verify status message was deleted
+    const deleteCall = progressCalls.find((c) => c.method === 'deleteMessage' && c.payload?.message_id === 1501);
+    if (!deleteCall) throw new Error('Status progress message was not deleted after video delivery');
+
+    console.log('15. ProgressBarTracker (0% -> 100%), Monotonic Progress, Blockquote Captions, and Instant Cleanup: PASSED');
+
+    console.log('\n🎉 ALL 15 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+
   } finally {
     globalThis.fetch = origFetch;
   }
