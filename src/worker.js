@@ -258,59 +258,51 @@ export async function getUnjoinedChannels(token, userId, currentChatId = null, c
 
   const { adminId } = getBotConfig(env);
   const now = Date.now();
-  const unjoined = [];
+  const unjoinedResults = await Promise.all(
+    channelsToCheck.map(async (ch) => {
+      const chTarget = ch.target;
+      const norm = String(chTarget || '').toLowerCase();
+      const lastErr = channelErrorCache.get(norm) || 0;
+      if (now - lastErr < 5 * 60 * 1000) return null;
 
-  for (const ch of channelsToCheck) {
-    const chTarget = ch.target;
-    const norm = String(chTarget || '').toLowerCase();
-    const lastErr = channelErrorCache.get(norm) || 0;
-    if (now - lastErr < 5 * 60 * 1000) {
-      // Channel currently has a verified bot-side error -> fail open so user is not blocked!
-      continue;
-    }
-
-    try {
-      const chatRef = chTarget.startsWith('-') ? Number(chTarget) : chTarget;
-      const memRes = await tgCall(token, 'getChatMember', { chat_id: chatRef, user_id: Number(userId) });
-      if (memRes?.ok && memRes.result) {
-        channelErrorCache.delete(norm);
-        const status = memRes.result.status;
-        if (['left', 'kicked'].includes(status)) {
-          unjoined.push(ch);
-        } else if (status === 'restricted' && memRes.result.is_member === false) {
-          unjoined.push(ch);
-        }
-      } else {
-        const errDesc = String(memRes?.description || '').toLowerCase();
-        if (
-          errDesc.includes('participant_id_invalid') ||
-          errDesc.includes('user_not_participant') ||
-          errDesc.includes('user not found') ||
-          errDesc.includes('user not a participant')
-        ) {
+      try {
+        const chatRef = chTarget.startsWith('-') ? Number(chTarget) : chTarget;
+        const memRes = await tgCall(token, 'getChatMember', { chat_id: chatRef, user_id: Number(userId) });
+        if (memRes?.ok && memRes.result) {
           channelErrorCache.delete(norm);
-          unjoined.push(ch);
+          const status = memRes.result.status;
+          if (['left', 'kicked'].includes(status)) return ch;
+          if (status === 'restricted' && memRes.result.is_member === false) return ch;
         } else {
-          // Bot-side or chat permission error -> FAIL OPEN for user and alert Admin!
-          channelErrorCache.set(norm, now);
-          await notifyAdminChannelIssue(
-            token,
-            adminId,
-            chTarget,
-            errDesc || 'Bot permission error',
-            'Direct download allowed',
-            false,
-            ch.title,
-            env
-          );
+          const errDesc = String(memRes?.description || '').toLowerCase();
+          if (
+            errDesc.includes('participant_id_invalid') ||
+            errDesc.includes('user_not_participant') ||
+            errDesc.includes('user not found') ||
+            errDesc.includes('user not a participant')
+          ) {
+            channelErrorCache.delete(norm);
+            return ch;
+          } else {
+            channelErrorCache.set(norm, now);
+            await notifyAdminChannelIssue(
+              token,
+              adminId,
+              chTarget,
+              errDesc || 'Bot permission error',
+              'Direct download allowed',
+              false,
+              ch.title,
+              env
+            );
+          }
         }
-      }
-    } catch (e) {
-      // Fail open on transient error
-    }
-  }
+      } catch (e) {}
+      return null;
+    })
+  );
 
-  return unjoined;
+  return unjoinedResults.filter(Boolean);
 }
 
 export function buildForceSubPrompt(missingChannels = []) {
@@ -457,7 +449,7 @@ export async function handleUserChatMember(chatMemberUpdate, token, env = {}, ct
   const newStatus = newMember.status;
   if (['member', 'administrator', 'creator'].includes(newStatus)) {
     // User joined a connected chat in real-time -> mark verified!
-    db.setUserVerifiedMemory(uid, 30000);
+    db.setUserVerifiedMemory(uid, 60000);
   } else if (['left', 'kicked'].includes(newStatus)) {
     // User left or was kicked/banned -> IMMEDIATELY revoke verification!
     db.revokeUserVerifiedMemory(uid);
