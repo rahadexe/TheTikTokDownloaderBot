@@ -46,11 +46,11 @@ async function runTests() {
   // 3. Live Verification of All 3 Extraction Engines
   const liveTestUrl = 'https://vt.tiktok.com/ZSgQuVgCe/';
   let e1, e2, e3;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
-      e1 = e1 || (await extractFromTikWM(liveTestUrl));
-      e2 = e2 || (await extractFromTikTokDirect(liveTestUrl));
-      e3 = e3 || (await extractFromTikMate(liveTestUrl));
+      if (!e1?.videoUrl) e1 = await extractFromTikWM(liveTestUrl);
+      if (!e2?.videoUrl || !e2?.cookies) e2 = await extractFromTikTokDirect(liveTestUrl);
+      if (!e3?.videoUrl) e3 = await extractFromTikMate(liveTestUrl);
       if (e1?.videoUrl && e2?.videoUrl && e2?.cookies && e3?.videoUrl) break;
     } catch (err) {
       console.error('Extraction attempt error:', err);
@@ -908,7 +908,185 @@ async function runTests() {
 
     console.log('15. ProgressBarTracker (0% -> 100%), Monotonic Progress, Blockquote Captions, and Instant Cleanup: PASSED');
 
-    console.log('\n🎉 ALL 15 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 16. Automatic Bot Membership Tracking (my_chat_member) & Real-time Join Listener (chat_member)
+    const membershipCalls = [];
+    const prevFetch16 = globalThis.fetch;
+    const adminId = 6775546602;
+
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        membershipCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      return prevFetch16(url, opts);
+    };
+
+    // 16a. Non-admin adds bot to a channel -> Bot MUST auto-leave!
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 25,
+          my_chat_member: {
+            chat: { id: -1001122334455, title: 'Unauthorized Channel', type: 'channel' },
+            from: { id: 9999999, first_name: 'Stranger' },
+            old_chat_member: { status: 'left' },
+            new_chat_member: { status: 'administrator' }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    const leaveCall = membershipCalls.find((c) => c.method === 'leaveChat' && c.payload?.chat_id === -1001122334455);
+    if (!leaveCall) throw new Error('Bot did not auto-leave unauthorized channel');
+
+    // 16b. Authorized Admin adds bot to channel as Administrator -> Auto-connects!
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 26,
+          my_chat_member: {
+            chat: { id: -1009988776655, title: 'Official TikTok Channel', username: 'TikTokOfficialCh', type: 'channel' },
+            from: { id: adminId, first_name: 'AdminRahad' },
+            old_chat_member: { status: 'left' },
+            new_chat_member: { status: 'administrator' }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    const connectedList = await db.getConnectedChats({});
+    const isConn = connectedList.some((c) => c.target === '@TikTokOfficialCh');
+    if (!isConn) throw new Error('Admin auto-connect channel failed');
+
+    // 16c. Bot removed from connected chat -> Auto-disconnects & alerts admin!
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 27,
+          my_chat_member: {
+            chat: { id: -1009988776655, title: 'Official TikTok Channel', username: 'TikTokOfficialCh', type: 'channel' },
+            from: { id: adminId, first_name: 'AdminRahad' },
+            old_chat_member: { status: 'administrator' },
+            new_chat_member: { status: 'kicked' }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    const afterKick = await db.getConnectedChats({});
+    if (afterKick.some((c) => c.target === '@TikTokOfficialCh')) throw new Error('Auto-disconnect on kick failed');
+    const alertCall = membershipCalls.find((c) => c.method === 'sendMessage' && c.payload?.text?.includes('Channel Issue Alert') && c.payload?.text?.includes('Bot Removed'));
+    if (!alertCall) throw new Error('Admin channel issue alert on kick was not sent');
+
+    // 16d. Real-time user membership join listener (chat_member) -> marks verified in 0ms!
+    const realTimeUserId = 5544332211;
+    db.clearVerifiedUsersMemory();
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 28,
+          chat_member: {
+            chat: { id: -100123456789, title: 'Sponsor Community', type: 'supergroup' },
+            from: { id: realTimeUserId, first_name: 'RealTimeUser' },
+            new_chat_member: { status: 'member', user: { id: realTimeUserId } }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    if (!db.isUserVerifiedMemory(realTimeUserId)) throw new Error('chat_member join did not set verified memory in 0ms');
+
+    console.log('16. Automatic Bot Membership Tracking (my_chat_member) & Real-time Join Listener (chat_member): PASSED');
+
+    // 17. Group Deep-Link Connection, Group Video Processing & Force-Sub Group Exemption
+    const groupCalls = [];
+    const groupId = -1007788990011;
+    const groupUserId = 33221144;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        groupCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        if (urlStr.includes('/getChatMember')) {
+          return new Response(JSON.stringify({ ok: true, result: { status: 'administrator', is_member: true } }));
+        }
+        if (urlStr.includes('/sendMessage')) {
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 1701 } }));
+        }
+        if (urlStr.includes('/sendVideo')) {
+          return new Response(JSON.stringify({ ok: true, result: { message_id: 1702, video: { file_id: 'BAACAgUAAxkBAA_GRP_17', file_unique_id: 'AgAD_GRP_17' } } }));
+        }
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      return prevFetch16(url, opts);
+    };
+
+    // 17a. Admin sends /start in group -> Deletes /start in group & connects group to admin in private!
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 29,
+          message: {
+            message_id: 1700,
+            chat: { id: groupId, title: 'Rahad Tech Community', type: 'supergroup', username: 'RahadTechGroup' },
+            from: { id: adminId, first_name: 'AdminRahad' },
+            text: '/start'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    const delStartCall = groupCalls.find((c) => c.method === 'deleteMessage' && c.payload?.chat_id === groupId);
+    if (!delStartCall) throw new Error('Admin /start in group was not deleted');
+    const adminPrivMsg = groupCalls.find((c) => c.method === 'sendMessage' && c.payload?.chat_id === adminId && c.payload?.text?.includes('Connected:'));
+    if (!adminPrivMsg) throw new Error('Admin private confirmation for group /start was not sent');
+
+    // 17b. In-group link download: user sends link inside the connected group -> Current group is exempt from force-sub!
+    db.setUserVerifiedMemory(groupUserId);
+    const waitGrpVid = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 30,
+          message: {
+            message_id: 1705,
+            chat: { id: groupId, title: 'Rahad Tech Community', type: 'supergroup', username: 'RahadTechGroup' },
+            from: { id: groupUserId, first_name: 'GroupMember' },
+            text: 'https://www.tiktok.com/@user/video/7692664817294773512'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) },
+      { waitUntil: (p) => waitGrpVid.push(p) }
+    );
+    await Promise.all(waitGrpVid);
+    const grpVidDelivery = groupCalls.find((c) => c.method === 'sendVideo' && c.payload?.chat_id === groupId);
+    if (!grpVidDelivery) throw new Error('Video was not delivered inside the group');
+
+    console.log('17. Group Deep-Link Connection, Group Video Processing & Force-Sub Group Exemption: PASSED');
+
+    console.log('\n🎉 ALL 17 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+
 
   } finally {
     globalThis.fetch = origFetch;
