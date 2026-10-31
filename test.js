@@ -1114,7 +1114,71 @@ async function runTests() {
 
     console.log('17. Group Deep-Link Connection, Group Video Processing & Force-Sub Group Exemption: PASSED');
 
-    console.log('\n🎉 ALL 17 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 18. Automated Bot Commands (/start), Profile & Menu Button Auto-Sync (/setup & /setWebhook)
+    const setupCalls = [];
+    const prevFetch18 = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        setupCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        return new Response(JSON.stringify({ ok: true, result: true }));
+      }
+      return prevFetch18(url, opts);
+    };
+
+    // 18a. Call GET /setWebhook -> triggers webhook + auto-syncs commands & profile
+    const setHookRes = await worker.fetch(
+      new Request('https://worker.test/setWebhook'),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    const setHookData = await setHookRes.json();
+    if (!setHookData.webhook || !setHookData.commands) {
+      throw new Error('GET /setWebhook did not return webhook and commands sync status');
+    }
+    const cmdCall = setupCalls.find((c) => c.method === 'setMyCommands');
+    if (!cmdCall || cmdCall.payload?.commands?.[0]?.command !== 'start') {
+      throw new Error('setMyCommands was not registered with start command');
+    }
+    const menuCall = setupCalls.find((c) => c.method === 'setChatMenuButton');
+    if (!menuCall || menuCall.payload?.menu_button?.type !== 'commands') {
+      throw new Error('setChatMenuButton was not configured for commands');
+    }
+    const descCall = setupCalls.find((c) => c.method === 'setMyDescription');
+    if (!descCall || !descCall.payload?.description?.includes('TikTok Video Downloader')) {
+      throw new Error('setMyDescription was not set');
+    }
+
+    // 18b. Admin runs /setup command -> replies with confirmation
+    const waitSetupCmd = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 31,
+          message: {
+            message_id: 1800,
+            chat: { id: adminId, type: 'private' },
+            from: { id: adminId, first_name: 'AdminRahad' },
+            text: '/setup'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) },
+      { waitUntil: (p) => waitSetupCmd.push(p) }
+    );
+    await Promise.all(waitSetupCmd);
+    const setupConfirm = setupCalls.find((c) => c.method === 'sendMessage' && c.payload?.text?.includes('Bot Commands & Profile Synced'));
+    if (!setupConfirm) throw new Error('Admin /setup command did not send confirmation message');
+
+    globalThis.fetch = prevFetch18;
+    console.log('18. Automated Bot Commands (/start), Profile & Menu Button Auto-Sync (/setup & /setWebhook): PASSED');
+
+    console.log('\n🎉 ALL 18 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
 
 
   } finally {

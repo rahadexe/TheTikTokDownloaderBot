@@ -197,6 +197,49 @@ export async function notifyAdminChannelIssue(
   }).catch(() => {});
 }
 
+export async function syncBotCommandsAndProfile(token, env = {}) {
+  const commands = [
+    { command: 'start', description: 'Start the bot' }
+  ];
+  let cmdRes = null;
+  try {
+    cmdRes = await tgCall(token, 'setMyCommands', { commands });
+  } catch (e) {
+    console.warn('setMyCommands failed:', e.message);
+  }
+
+  let menuRes = null;
+  try {
+    menuRes = await tgCall(token, 'setChatMenuButton', {
+      menu_button: { type: 'commands' }
+    });
+  } catch {}
+
+  const desc =
+    '📥 TikTok Video Downloader!\n\n' +
+    '🌐 Supported Platforms:\n' +
+    '• TikTok: Videos, Photos & Audio\n\n' +
+    '✨ Features:\n' +
+    '• Download videos without watermark\n' +
+    '• One tap MP3 audio extraction\n' +
+    '• Fast, safe & unlimited downloads\n' +
+    '• 100% free with no watermark\n\n' +
+    'Send any TikTok link to download instantly!\n\n' +
+    '📢 Updates: @RHToolsOfficial';
+
+  const shortDesc = 'TikTok Video Downloader. Download HD Videos & MP3 for free without watermark.';
+
+  try {
+    await tgCall(token, 'setMyDescription', { description: desc });
+  } catch {}
+
+  try {
+    await tgCall(token, 'setMyShortDescription', { short_description: shortDesc });
+  } catch {}
+
+  return { ok: true, commands: cmdRes, menu: menuRes };
+}
+
 export async function getUnjoinedChannels(token, userId, currentChatId = null, currentChatUsername = null, env = {}) {
   const channels = await db.getConnectedChats(env);
   if (!channels || channels.length === 0) return [];
@@ -574,7 +617,7 @@ export default {
     }
 
     // Set webhook helper route: GET /setWebhook
-    if (request.method === 'GET' && (url.pathname === '/setWebhook' || url.pathname === '/webhookInfo')) {
+    if (request.method === 'GET' && (url.pathname === '/setWebhook' || url.pathname === '/webhookInfo' || url.pathname === '/setup' || url.pathname === '/setCommands' || url.pathname === '/setcommands')) {
       const botToken = env.BOT_TOKEN;
       if (!botToken || botToken === 'YOUR_BOT_TOKEN_HERE') {
         return new Response('Error: BOT_TOKEN is not configured.', { status: 400 });
@@ -590,7 +633,8 @@ export default {
         url: webhookUrl,
         allowed_updates: ['message', 'callback_query', 'inline_query', 'my_chat_member', 'chat_member', 'chat_join_request']
       });
-      return new Response(JSON.stringify(data, null, 2), {
+      const syncRes = await syncBotCommandsAndProfile(botToken, env).catch(() => null);
+      return new Response(JSON.stringify({ webhook: data, commands: syncRes }, null, 2), {
         headers: { 'Content-Type': 'application/json' }
       });
     }
@@ -1344,6 +1388,16 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         reply_markup: getAdminPanelKeyboard(channels)
       });
     }
+
+    if (cmdToken === '/setup' || cmdToken === '/setcommands') {
+      await syncBotCommandsAndProfile(token, env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '✅ <b>Bot Commands & Profile Synced!</b>\n\n<code>/start</code> command and Menu button are now registered with Telegram.',
+        parse_mode: 'HTML',
+        reply_markup: getMainAdminKeyboard()
+      });
+    }
   }
 
   const isGroup = msg.chat?.type === 'group' || msg.chat?.type === 'supergroup';
@@ -1413,6 +1467,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   // /start or /help command in private chat
   if (cmdToken === '/start' || cmdToken === '/help') {
+    if (msg.from) {
+      await db.upsertUser({ id: userId, username: msg.from.username, firstName: msg.from.first_name }, env).catch(() => {});
+    }
     const payloadPart = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
     const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
     if (!deepTikTokUrl) {
