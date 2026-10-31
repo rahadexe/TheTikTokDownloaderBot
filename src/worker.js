@@ -7,6 +7,8 @@
 import * as db from './db.js';
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+const MOBILE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1';
 const MAX_UPLOAD_BYTES = 49 * 1024 * 1024; // 49 MB (under Telegram's 50 MB Bot API multipart cap)
 const MIN_VIDEO_BYTES = 8192; // Reject 280-byte CDN 503/403 text stubs
 const MIN_AUDIO_BYTES = 4096;
@@ -1431,6 +1433,33 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 }
 
 
+export function isGenericMusicTitle(str) {
+  if (!str) return true;
+  const s = String(str).trim().toLowerCase();
+  return (
+    s === "original sound" ||
+    s === "original audio" ||
+    s === "original" ||
+    s.startsWith("original sound") ||
+    s.startsWith("original audio") ||
+    s.startsWith("sound -") ||
+    s.startsWith("audio -")
+  );
+}
+
+export function resolveMediaTitle(videoTitle, musicTitle, fallback = "TikTok Audio") {
+  if (videoTitle && typeof videoTitle === "string") {
+    const vt = videoTitle.trim();
+    if (vt && !["tiktok video", "video", "tiktok photo"].includes(vt.toLowerCase())) {
+      return vt;
+    }
+  }
+  if (musicTitle && typeof musicTitle === "string" && !isGenericMusicTitle(musicTitle)) {
+    return musicTitle.trim();
+  }
+  return fallback;
+}
+
 export function formatCaptionTitle(rawTitle, author = null, maxChars = 80) {
   if (!rawTitle) return '';
   let cleaned = String(rawTitle).trim();
@@ -1440,7 +1469,7 @@ export function formatCaptionTitle(rawTitle, author = null, maxChars = 80) {
     cleaned = cleaned.replace(authorPattern, '').trim();
   }
   cleaned = cleaned.replace(/\s+/g, ' ').trim();
-  if (!cleaned || cleaned.toLowerCase() === 'tiktok video' || cleaned.toLowerCase() === 'video') return '';
+  if (!cleaned || cleaned.toLowerCase() === 'tiktok video' || cleaned.toLowerCase() === 'video' || cleaned.toLowerCase() === 'tiktok audio' || cleaned.toLowerCase() === 'audio' || isGenericMusicTitle(cleaned)) return '';
   if (cleaned.length > maxChars) {
     let cut = cleaned.slice(0, maxChars - 3);
     const lastSpace = cut.lastIndexOf(' ');
@@ -2242,13 +2271,15 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
     const cached = await db.getCachedVideo(videoId, env);
     if (cached && cached.audio_file_id) {
       await tracker.update(100, true);
-      const cachedTitle = safeUnicodeSlice(cached.music_title || cached.title || 'TikTok Audio', 50);
-      const { html: safeCaption } = buildMediaCaption(cached.music_title || cached.title, cached.author, botTag);
+      const effectiveTitle = resolveMediaTitle(cached.title, cached.music_title, 'TikTok Audio');
+      const effectiveAuthor = cached.author || cached.author_handle || null;
+      const cleanTitle = safeUnicodeSlice(formatCaptionTitle(effectiveTitle, effectiveAuthor, 50) || effectiveTitle, 50) || 'TikTok Audio';
+      const { html: safeCaption } = buildMediaCaption(effectiveTitle, effectiveAuthor, botTag);
 
       const cachedRes = await tgCall(token, 'sendAudio', {
         chat_id: chatId,
         audio: cached.audio_file_id,
-        title: cachedTitle,
+        title: cleanTitle,
         performer: botTag,
         caption: safeCaption,
         parse_mode: 'HTML'
@@ -2315,8 +2346,10 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
       }
     }
 
-    const cleanTitle = safeUnicodeSlice(musicTitle || displayTitle || 'TikTok Audio', 50) || 'TikTok Audio';
-    const { html: htmlCaption, plain: plainCaption } = buildMediaCaption(musicTitle || displayTitle, meta?.author || cached?.author, botTag);
+    const effectiveTitle = resolveMediaTitle(cached?.title || displayTitle || meta?.title, musicTitle, 'TikTok Audio');
+    const effectiveAuthor = meta?.author || meta?.authorHandle || cached?.author || null;
+    const cleanTitle = safeUnicodeSlice(formatCaptionTitle(effectiveTitle, effectiveAuthor, 50) || effectiveTitle, 50) || 'TikTok Audio';
+    const { html: htmlCaption, plain: plainCaption } = buildMediaCaption(effectiveTitle, effectiveAuthor, botTag);
 
     let sentAudio = null;
 
@@ -2654,7 +2687,7 @@ async function extractFromTikTokDirect(url) {
     const res = await fetch(url, {
       redirect: 'follow',
       headers: {
-        'User-Agent': BROWSER_UA,
+        'User-Agent': MOBILE_UA,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
       },

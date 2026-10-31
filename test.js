@@ -317,6 +317,12 @@ async function runTests() {
     const audioProgressDelete = telegramCalls.find((c) => c.method === 'deleteMessage' && c.payload?.message_id === 700);
     if (!audioProgressDelete) throw new Error('Audio status progress message was not deleted upon delivery');
 
+    // Verify audio caption follows video title rules rather than generic 'original sound'
+    const audioSendCall = telegramCalls.find((c) => c.url.includes('/sendAudio'));
+    if (audioSendCall?.payload?.caption?.includes('original sound')) {
+      throw new Error('Audio caption used generic "original sound" instead of video title rules');
+    }
+
     console.log('8. Audio Extraction Callback + Persistent Audio Hash Cache: PASSED');
 
     // 9. Database, User History & Cache Hit Metrics Verification
