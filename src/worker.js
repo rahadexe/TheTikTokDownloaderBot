@@ -457,7 +457,10 @@ export async function handleUserChatMember(chatMemberUpdate, token, env = {}, ct
   const newStatus = newMember.status;
   if (['member', 'administrator', 'creator'].includes(newStatus)) {
     // User joined a connected chat in real-time -> mark verified!
-    db.setUserVerifiedMemory(uid);
+    db.setUserVerifiedMemory(uid, 30000);
+  } else if (['left', 'kicked'].includes(newStatus)) {
+    // User left or was kicked/banned -> IMMEDIATELY revoke verification!
+    db.revokeUserVerifiedMemory(uid);
   }
 }
 

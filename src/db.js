@@ -901,9 +901,15 @@ export function isUserVerifiedMemory(userId) {
   return Boolean(exp && exp > Date.now());
 }
 
-export function setUserVerifiedMemory(userId, durationMs = 21600000) { // 6 hours
+export function setUserVerifiedMemory(userId, durationMs = 30000) { // 30 seconds default window
   if (!userId) return;
   setBoundedMap(verifiedUsersMem, Number(userId), Date.now() + durationMs, 5000);
+}
+
+export function revokeUserVerifiedMemory(userId) {
+  if (!userId) return;
+  verifiedUsersMem.delete(Number(userId));
+  pendingUserLinks.delete(Number(userId));
 }
 
 export function clearVerifiedUsersMemory() {

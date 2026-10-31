@@ -1037,6 +1037,24 @@ async function runTests() {
     );
     if (!db.isUserVerifiedMemory(realTimeUserId)) throw new Error('chat_member join did not set verified memory in 0ms');
 
+    // 16b. User leaves channel -> chat_member status: 'left' -> IMMEDIATELY revokes verified memory!
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 32,
+          chat_member: {
+            chat: { id: -100123456789, title: 'Sponsor Community', type: 'supergroup' },
+            from: { id: realTimeUserId, first_name: 'RealTimeUser' },
+            new_chat_member: { status: 'left', user: { id: realTimeUserId } }
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    if (db.isUserVerifiedMemory(realTimeUserId)) throw new Error('chat_member leave did not revoke verified memory');
+
     globalThis.fetch = prevFetch16;
     console.log('16. Automatic Bot Membership Tracking (my_chat_member) & Real-time Join Listener (chat_member): PASSED');
 
