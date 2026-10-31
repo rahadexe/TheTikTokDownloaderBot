@@ -919,7 +919,7 @@ export function isUserVerifiedMemory(userId) {
   return Boolean(exp && exp > Date.now());
 }
 
-export function setUserVerifiedMemory(userId, durationMs = 60000) { // 60s sliding window
+export function setUserVerifiedMemory(userId, durationMs = 5000) { // 5s anti-flood window
   if (!userId) return;
   setBoundedMap(verifiedUsersMem, Number(userId), Date.now() + durationMs, 5000);
 }
