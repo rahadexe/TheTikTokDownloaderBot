@@ -1138,6 +1138,28 @@ async function runTests() {
     const grpVidDelivery = groupCalls.find((c) => c.method === 'sendVideo' && c.payload?.chat_id === groupId);
     if (!grpVidDelivery) throw new Error('Video was not delivered inside the group');
 
+    // 17c. In-group non-TikTok message / links (e.g. Facebook, YouTube, chat) -> Bot remains 100% SILENT
+    const preCount = groupCalls.length;
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 31,
+          message: {
+            message_id: 1706,
+            chat: { id: groupId, title: 'Rahad Tech Community', type: 'supergroup', username: 'RahadTechGroup' },
+            from: { id: groupUserId, first_name: 'GroupMember' },
+            text: 'Hey check this facebook video https://fb.watch/test1234/ and youtube https://youtube.com/watch?v=123'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
+    if (groupCalls.length !== preCount) {
+      throw new Error('Bot unexpectedly responded to non-TikTok message in group');
+    }
+
     console.log('17. Group Deep-Link Connection, Group Video Processing & Force-Sub Group Exemption: PASSED');
 
     // 18. Automated Bot Commands (/start), Profile & Menu Button Auto-Sync (/setup & /setWebhook)

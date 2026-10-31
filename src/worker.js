@@ -1359,6 +1359,57 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
+  // In Groups/Supergroups: ONLY respond when valid TikTok link(s) are detected!
+  // Stay 100% silent for any other text, conversation, or non-TikTok links (FB, IG, YouTube, etc.)
+  if (isGroup) {
+    const groupTikTokUrls = extractAllTikTokUrls(text, 5);
+    if (groupTikTokUrls.length === 0) {
+      return; // Silently ignore all non-TikTok messages in groups
+    }
+
+    // Anti-Spam Flood Shield (Max 10 links per 60 seconds per user in group)
+    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length);
+    if (rateLimitResult.blocked) {
+      if (rateLimitResult.warning) {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: rateLimitResult.warning,
+          parse_mode: 'HTML'
+        });
+      }
+      return;
+    }
+
+    // Force-Subscribe Verification Gate (Group support with group exemption)
+    if (userId && userId !== adminId) {
+      const isVerified = db.isUserVerifiedMemory(userId);
+      if (!isVerified) {
+        const currentChatId = chatId;
+        const currentChatUname = msg.chat.username ? `@${msg.chat.username}` : null;
+        const missing = await getUnjoinedChannels(token, userId, currentChatId, currentChatUname, env);
+
+        if (missing.length === 0) {
+          db.setUserVerifiedMemory(userId);
+        } else {
+          db.setPendingLink(userId, { url: groupTikTokUrls[0], chatId });
+          const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+          return tgCall(token, 'sendMessage', {
+            chat_id: chatId,
+            text: promptText,
+            parse_mode: 'HTML',
+            reply_markup: markup
+          });
+        }
+      }
+    }
+
+    // Process up to 5 links sequentially
+    for (const link of groupTikTokUrls) {
+      await processTikTokDownload(link, chatId, msg.from, token, env, ctx);
+    }
+    return;
+  }
+
   // /start or /help command in private chat
   if (cmdToken === '/start' || cmdToken === '/help') {
     if (msg.from) {
