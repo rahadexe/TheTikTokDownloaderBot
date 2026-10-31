@@ -346,7 +346,7 @@ async function runTests() {
     await Promise.all(subWait);
 
     const gatePrompt = telegramCalls.find(
-      (c) => c.payload?.chat_id === subUserChatId && c.payload?.text?.includes('please join our channel first')
+      (c) => c.payload?.chat_id === subUserChatId && (c.payload?.text?.includes('Verification Required') || c.payload?.text?.includes('please join our channel first'))
     );
     if (!gatePrompt) throw new Error('Force-sub gate failed to prompt non-member user');
 
@@ -560,11 +560,153 @@ async function runTests() {
       { waitUntil: (p) => waitAdmBack.push(p) }
     );
     await Promise.all(waitAdmBack);
-    const admBackCall = [...telegramCalls].reverse().find((c) => c.payload?.chat_id === 6775546602 && c.payload?.text?.includes('Admin Mode closed'));
+    const admBackCall = [...telegramCalls].reverse().find((c) => c.payload?.chat_id === 6775546602 && (c.payload?.text === 'Exited' || c.payload?.text?.includes('Exited')));
     if (!admBackCall || admBackCall.payload?.reply_markup?.keyboard?.[0]?.[0]?.text !== '⚙️ Admin Panel') {
       throw new Error('Admin Back transition to Level 1 keyboard failed');
     }
     console.log('12. 2-Level Bottom Keyboard Admin Navigation: PASSED');
+
+    // 12B. Submenu Back Navigation, Broadcast Preview/Cancel, Activity, and Disconnect Navigation
+    // 1) Broadcast: tap 📣 Broadcast -> Send message -> Preview -> Cancel -> Returns to Dashboard
+    const waitBcast1 = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 20,
+          message: {
+            message_id: 85,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '📣 Broadcast'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitBcast1.push(p) }
+    );
+    await Promise.all(waitBcast1);
+    const bcastPrompt = [...telegramCalls].reverse().find((c) => c.payload?.text?.includes('Send any message'));
+    if (!bcastPrompt) throw new Error('Broadcast prompt message failed');
+
+    // Send broadcast message -> gets preview
+    const waitBcast2 = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 21,
+          message: {
+            message_id: 86,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: 'Important Update for all users!'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitBcast2.push(p) }
+    );
+    await Promise.all(waitBcast2);
+    const bcastPreview = [...telegramCalls].reverse().find((c) => c.payload?.text?.includes('Broadcast Preview Above'));
+    if (!bcastPreview) throw new Error('Broadcast preview prompt failed');
+
+    // Tap Cancel -> returns to Admin Dashboard
+    const waitBcastCancel = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 22,
+          message: {
+            message_id: 87,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '❌ Cancel'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitBcastCancel.push(p) }
+    );
+    await Promise.all(waitBcastCancel);
+    const returnedDash = [...telegramCalls].reverse().find((c) => c.payload?.text?.includes('Admin Panel'));
+    if (!returnedDash) throw new Error('Broadcast cancel failed to return to Admin Dashboard');
+
+    // 2) Activity: tap 📊 Activity -> Back -> returns to Dashboard
+    const waitAct = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 23,
+          message: {
+            message_id: 88,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: '📊 Activity'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitAct.push(p) }
+    );
+    await Promise.all(waitAct);
+    const actCall = [...telegramCalls].reverse().find((c) => c.payload?.text?.includes('System Activity') || c.payload?.text?.includes('Issues'));
+    if (!actCall) throw new Error('Activity view call failed');
+
+    // Tap Back from Activity -> returns to Admin Dashboard
+    const waitActBack = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 24,
+          message: {
+            message_id: 89,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: 'Back'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitActBack.push(p) }
+    );
+    await Promise.all(waitActBack);
+    const dashFromAct = [...telegramCalls].reverse().find((c) => c.payload?.text?.includes('Admin Panel'));
+    if (!dashFromAct) throw new Error('Back from Activity failed to return to Admin Dashboard');
+
+    // Tap Back from Admin Dashboard -> Exits with 'Exited' and Level 1 keyboard
+    const waitExit = [];
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 25,
+          message: {
+            message_id: 90,
+            chat: { id: 6775546602, type: 'private' },
+            from: { id: 6775546602, first_name: 'AdminRahad' },
+            text: 'Back'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: '6775546602' },
+      { waitUntil: (p) => waitExit.push(p) }
+    );
+    await Promise.all(waitExit);
+    const exitedCall = [...telegramCalls].reverse().find((c) => c.payload?.text === 'Exited');
+    if (!exitedCall || exitedCall.payload?.reply_markup?.keyboard?.[0]?.[0]?.text !== '⚙️ Admin Panel') {
+      throw new Error('Exited message and Level 1 keyboard failed');
+    }
+    console.log('12B. Submenu Back Navigation, Broadcast Preview/Cancel, and Exited: PASSED');
 
     // 13. chat_shared Native Channel Connection and Persistence
     const waitChatShared = [];

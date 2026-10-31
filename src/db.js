@@ -52,6 +52,17 @@ const CORE_SCHEMA_SQL = `
     value TEXT,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS server_errors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER DEFAULT 0,
+    username TEXT,
+    url TEXT,
+    error_type TEXT,
+    error_message TEXT,
+    platform TEXT DEFAULT 'TikTok',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
 `;
 
 const MIGRATION_COLUMNS = [
@@ -961,4 +972,70 @@ export async function getAllUserIds(env) {
     } catch {}
   }
   return Array.from(memoryStore.users.keys()).map(Number).filter(Boolean);
+}
+
+/**
+ * Server Error / Activity Logging for Admin Panel
+ */
+export async function logServerError({ userId = 0, username = '', url = '', errorType = 'Error', errorMessage = '', platform = 'TikTok' }, env) {
+  await ensureD1Schema(env);
+  const now = new Date().toISOString();
+  if (env?.DB) {
+    try {
+      await env.DB.prepare(`
+        INSERT INTO server_errors (user_id, username, url, error_type, error_message, platform, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(Number(userId) || 0, String(username || ''), String(url || ''), String(errorType || ''), String(errorMessage || '').slice(0, 1000), String(platform || 'TikTok'), now).run();
+    } catch (e) {
+      console.warn('logServerError D1 error:', e.message);
+    }
+  } else if (isNodeSqlite && db) {
+    try {
+      db.prepare(`
+        INSERT INTO server_errors (user_id, username, url, error_type, error_message, platform, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(Number(userId) || 0, String(username || ''), String(url || ''), String(errorType || ''), String(errorMessage || '').slice(0, 1000), String(platform || 'TikTok'), now);
+    } catch (e) {
+      console.warn('logServerError sqlite error:', e.message);
+    }
+  }
+}
+
+export async function getRecentServerErrors(limit = 15, env) {
+  await ensureD1Schema(env);
+  if (env?.DB) {
+    try {
+      const res = await env.DB.prepare(`
+        SELECT id, user_id, username, url, error_type, error_message, platform, created_at
+        FROM server_errors
+        ORDER BY id DESC
+        LIMIT ?
+      `).bind(limit).all();
+      return res.results || [];
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      const rows = db.prepare(`
+        SELECT id, user_id, username, url, error_type, error_message, platform, created_at
+        FROM server_errors
+        ORDER BY id DESC
+        LIMIT ?
+      `).all(limit);
+      return rows || [];
+    } catch {}
+  }
+  return [];
+}
+
+export async function clearServerErrors(env) {
+  await ensureD1Schema(env);
+  if (env?.DB) {
+    try {
+      await env.DB.prepare('DELETE FROM server_errors').run();
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      db.prepare('DELETE FROM server_errors').run();
+    } catch {}
+  }
 }

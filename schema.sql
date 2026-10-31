@@ -53,3 +53,16 @@ CREATE INDEX IF NOT EXISTS idx_users_downloads ON users(downloads_count);
 CREATE INDEX IF NOT EXISTS idx_cache_created ON video_cache(created_at);
 CREATE INDEX IF NOT EXISTS idx_link_video_id ON link_cache(video_id);
 CREATE INDEX IF NOT EXISTS idx_user_downloads_uid ON user_downloads(user_id, created_at);
+
+CREATE TABLE IF NOT EXISTS server_errors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER DEFAULT 0,
+  username TEXT,
+  url TEXT,
+  error_type TEXT,
+  error_message TEXT,
+  platform TEXT DEFAULT 'TikTok',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_server_errors_created ON server_errors(created_at);

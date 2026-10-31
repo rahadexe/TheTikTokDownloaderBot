@@ -355,14 +355,18 @@ function extractInputTextWithEntities(msg) {
  * Handle incoming Telegram Update
  */
 
-function getMainAdminKeyboard() {
+const adminViewState = new Map(); // userId -> 'MAIN' | 'PANEL' | 'SUBMENU'
+const adminBroadcastState = new Map(); // userId -> { stage, chat_id, message_id, preview_msg_id, auto_delete_mins }
+const adminWaitingAddChat = new Map(); // userId -> boolean
+
+export function getMainAdminKeyboard() {
   return {
     keyboard: [[{ text: '⚙️ Admin Panel' }]],
     resize_keyboard: true
   };
 }
 
-function getAdminPanelKeyboard(channels = []) {
+export function getAdminPanelKeyboard(channels = []) {
   const chRights = {
     is_anonymous: false,
     can_manage_chat: true,
@@ -378,7 +382,6 @@ function getAdminPanelKeyboard(channels = []) {
     can_post_messages: true,
     can_edit_messages: false
   };
-
   const grpRights = {
     is_anonymous: false,
     can_manage_chat: true,
@@ -393,35 +396,38 @@ function getAdminPanelKeyboard(channels = []) {
     can_delete_stories: false
   };
 
-  const addRow = channels.length < 3
-    ? [
-        {
-          text: '📢 Add Channel',
-          request_chat: {
-            request_id: 101,
-            chat_is_channel: true,
-            user_administrator_rights: chRights,
-            bot_administrator_rights: chRights,
-            request_title: true,
-            request_username: true
-          }
-        },
-        {
-          text: '👥 Add Group',
-          request_chat: {
-            request_id: 102,
-            chat_is_channel: false,
-            user_administrator_rights: grpRights,
-            bot_administrator_rights: grpRights,
-            request_title: true,
-            request_username: true
-          }
+  let addRow;
+  if (channels.length < 3) {
+    addRow = [
+      {
+        text: '📢 Add Channel',
+        request_chat: {
+          request_id: 101,
+          chat_is_channel: true,
+          user_administrator_rights: chRights,
+          bot_administrator_rights: chRights,
+          request_title: true,
+          request_username: true
         }
-      ]
-    : [
-        { text: '📢 Add Channel' },
-        { text: '👥 Add Group' }
-      ];
+      },
+      {
+        text: '👥 Add Group',
+        request_chat: {
+          request_id: 102,
+          chat_is_channel: false,
+          user_administrator_rights: grpRights,
+          bot_administrator_rights: grpRights,
+          request_title: true,
+          request_username: true
+        }
+      }
+    ];
+  } else {
+    addRow = [
+      { text: '📢 Add Channel' },
+      { text: '👥 Add Group' }
+    ];
+  }
 
   const rows = [addRow];
   if (channels.length > 0) {
@@ -432,32 +438,82 @@ function getAdminPanelKeyboard(channels = []) {
     rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
   }
 
+  return { keyboard: rows, resize_keyboard: true };
+}
+
+export function getDisconnectKeyboard(channels = []) {
+  const rows = channels.map((c) => [{ text: `❌ Disconnect ${c.title || c.target}` }]);
+  rows.push([{ text: 'Back' }]);
+  return { keyboard: rows, resize_keyboard: true };
+}
+
+export function getBroadcastConfirmKeyboard(autoDeleteMins = 10) {
+  const opts = [[10, '10m'], [30, '30m'], [60, '1h'], [1440, '24h'], [0, 'Off']];
+  const timerRow = opts.map(([val, label]) => {
+    const btnTxt = autoDeleteMins === val ? `${label} ✓` : label;
+    return { text: btnTxt };
+  });
   return {
-    keyboard: rows,
+    keyboard: [
+      timerRow,
+      [{ text: '✅ Confirm' }, { text: '❌ Cancel' }]
+    ],
     resize_keyboard: true
   };
 }
 
-function formatConnectedChatsList(channels = []) {
+export function formatAutoDeleteLabel(mins) {
+  if (mins <= 0) return 'Off';
+  if (mins % 60 === 0 && mins >= 60) {
+    const hrs = mins / 60;
+    return hrs === 1 ? `${hrs} hr` : `${hrs} hrs`;
+  }
+  return mins === 1 ? `${mins} min` : `${mins} mins`;
+}
+
+export function formatConnectedChatsList(channels = []) {
   if (!channels || channels.length === 0) return '• <i>None</i>';
   return channels.map((c) => `• <b>${escapeHtml(c.title || c.target)}</b>`).join('\n');
 }
 
+async function showAdminDashboard(chatId, token, env) {
+  adminViewState.set(Number(chatId), 'PANEL');
+  const stats = await db.getStats(env);
+  const channels = await db.getConnectedChats(env);
+  const chList = formatConnectedChatsList(channels);
+  const totalUsers = stats.users || 0;
+  const activeUsers = stats.activeUsers || totalUsers;
+  const totalDownloads = stats.downloads || 0;
+  const cachedVideos = stats.cachedVideos || 0;
+
+  const statsBlock =
+    `⚙️ <b>Admin Panel</b>\n` +
+    `<blockquote>` +
+    `Total Users: <b>${totalUsers}</b>\n` +
+    `Active Users: <b>${activeUsers}</b>\n` +
+    `Total Downloads: <b>${totalDownloads}</b>\n` +
+    `Cached Videos: <b>${cachedVideos}</b>` +
+    `</blockquote>`;
+
+  let dashboardText;
+  if (channels.length > 0) {
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`;
+  } else {
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (0/3)</b>`;
+  }
+
+  return tgCall(token, 'sendMessage', {
+    chat_id: chatId,
+    text: dashboardText,
+    parse_mode: 'HTML',
+    reply_markup: getAdminPanelKeyboard(channels)
+  });
+}
+
 async function handleUpdate(update, token, env = {}, ctx = null) {
-  // 0. Deduplicate retried webhook updates (prevents double delivery)
-  if (update?.update_id !== undefined) {
-    const claimed = await db.claimUpdateId(update.update_id);
-    if (!claimed) return;
-  }
+  if (!update) return;
 
-  // Non-blocking user stats recording: never delay Telegram response for analytics upsert!
-  if (update.message?.from) {
-    bgTask(db.upsertUser(update.message.from, env), ctx);
-  } else if (update.callback_query?.from) {
-    bgTask(db.upsertUser(update.callback_query.from, env), ctx);
-  }
-
-  // 1. Callback Queries (Audio extraction & Force-sub verification)
+  // 1. Callback Queries
   if (update.callback_query) {
     return handleCallback(update.callback_query, token, env, ctx);
   }
@@ -467,22 +523,25 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return handleInlineQuery(update.inline_query, token, env);
   }
 
-  // 3. Regular Messages (support text, media captions, and hyperlinked entities)
+  // 3. Regular Messages
   const msg = update.message;
   if (!msg) return;
+
   const chatId = msg.chat.id;
+  const userId = msg.from?.id || chatId;
   const botTag = await getBotTag(token);
   const { channelTag, adminId } = getBotConfig(env);
-  const isAdminUser = chatId === adminId || msg.from?.id === adminId;
+  const isAdminUser = chatId === adminId || userId === adminId;
 
-  // Handle Telegram request_chat shared responses (does not have msg.text)
+  // Handle Telegram request_chat shared responses
   if (isAdminUser && msg.chat_shared) {
+    adminViewState.set(userId, 'PANEL');
     const sharedChatId = msg.chat_shared.chat_id;
     const channels = await db.getConnectedChats(env);
     if (channels.length >= 3) {
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '⚠️ Limit reached (<b>3/3</b>). Disconnect a chat first.',
+        text: '⚠️ Limit reached (<b>3/3</b>).',
         parse_mode: 'HTML',
         reply_markup: getAdminPanelKeyboard(channels)
       });
@@ -511,178 +570,417 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  const text = extractInputTextWithEntities(msg);
-  if (!text) return;
+  const text = extractInputTextWithEntities(msg) || '';
   const cmdToken = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 
-  // Admin Level 1 & Level 2 Navigation
-  if (isAdminUser) {
-    if (text === 'Back') {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: '👋 <b>Admin Mode closed.</b>\nSend a link to download.',
-        parse_mode: 'HTML',
-        reply_markup: getMainAdminKeyboard()
-      });
-    }
+  // Admin Broadcast Composer Handler
+  if (isAdminUser && adminBroadcastState.has(userId)) {
+    const bcast = adminBroadcastState.get(userId);
+    const adminNavButtons = new Set([
+      'Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group',
+      'Disconnect', 'Disconnect Channel', '🗑️ Disconnect Channel', '🗑️ Disconnect',
+      'Broadcast', '📣 Broadcast', 'Activity', '📊 Activity', '🔄 Refresh Activity',
+      'Clear Logs', '🗑️ Clear Logs', 'Logs', '📄 Logs', '/logs', '/getlogs'
+    ]);
 
-    if (text === '⚙️ Admin Panel' || cmdToken === '/admin') {
-      const stats = await db.getStats(env);
-      const channels = await db.getConnectedChats(env);
-      const chList = formatConnectedChatsList(channels);
+    if (adminNavButtons.has(text) || text.startsWith('Disconnect ') || text.startsWith('❌ Disconnect ')) {
+      adminBroadcastState.delete(userId);
+    } else if (bcast?.stage === 'WAITING_MESSAGE') {
+      if (['Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin', 'Back', '⬅️ Back to Admin', '⬅️ Back', '❌ Cancel Broadcast', 'Cancel', '/cancel'].includes(text)) {
+        adminBroadcastState.delete(userId);
+        return showAdminDashboard(chatId, token, env);
+      }
+
+      const previewRes = await tgCall(token, 'copyMessage', {
+        chat_id: chatId,
+        from_chat_id: chatId,
+        message_id: msg.message_id
+      });
+
+      const allUids = await db.getAllUserIds(env);
+      const targetCount = allUids.length;
+      const userWord = targetCount === 1 ? 'user' : 'users';
+
+      adminBroadcastState.set(userId, {
+        stage: 'CONFIRM',
+        chat_id: chatId,
+        message_id: msg.message_id,
+        preview_msg_id: previewRes?.result?.message_id,
+        auto_delete_mins: 10
+      });
+
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text:
-          `⚙️ <b>Admin Panel</b>\n` +
-          `<blockquote>` +
-          `Total Users: <b>${stats.users}</b>\n` +
-          `Active Users: <b>${stats.activeUsers || stats.users}</b>\n` +
-          `Total Downloads: <b>${stats.downloads}</b>\n` +
-          `Cached Videos: <b>${stats.cachedVideos}</b>` +
-          `</blockquote>\n\n` +
-          `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+          `<b>Broadcast Preview Above</b>\n` +
+          `Recipients: <b>${targetCount} ${userWord}</b>\n` +
+          `Auto Delete: <b>10 mins</b>`,
         parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels)
+        reply_markup: getBroadcastConfirmKeyboard(10)
       });
-    }
+    } else if (bcast?.stage === 'CONFIRM') {
+      const cleanT = text.replace(/✓/g, '').trim().toLowerCase();
+      if (['10m', '30m', '1h', '24h', 'off'].includes(cleanT) || /^\d+\s*[mh]?$/.test(cleanT)) {
+        let newMins = 10;
+        if (cleanT === 'off') newMins = 0;
+        else if (cleanT.endsWith('h')) newMins = parseInt(cleanT, 10) * 60;
+        else if (cleanT.endsWith('m')) newMins = parseInt(cleanT, 10);
+        else newMins = parseInt(cleanT, 10);
 
-    if (text === '📊 Activity') {
-      const stats = await db.getStats(env);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text:
-          `📊 <b>System Activity</b>\n\n` +
-          `<blockquote>` +
-          `Total Users: <b>${stats.users}</b>\n` +
-          `Total Downloads: <b>${stats.downloads}</b>\n` +
-          `Cached Items: <b>${stats.cachedVideos}</b>\n` +
-          `Cache Hits: <b>${stats.cacheHits || 0}</b>` +
-          `</blockquote>`,
-        parse_mode: 'HTML',
-        reply_markup: {
-          keyboard: [[{ text: 'Back' }]],
-          resize_keyboard: true
-        }
-      });
-    }
+        bcast.auto_delete_mins = newMins;
+        const allUids = await db.getAllUserIds(env);
+        const targetCount = allUids.length;
+        const userWord = targetCount === 1 ? 'user' : 'users';
 
-    if (text === '🗑️ Disconnect') {
-      const channels = await db.getConnectedChats(env);
-      if (channels.length === 0) {
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: 'No connected chats to disconnect.',
-          reply_markup: getAdminPanelKeyboard(channels)
-        });
-      }
-      const rows = channels.map((c) => [{ text: `❌ Disconnect ${c.title || c.target}` }]);
-      rows.push([{ text: 'Back' }]);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: 'Select a chat to disconnect:',
-        reply_markup: { keyboard: rows, resize_keyboard: true }
-      });
-    }
-
-    if (text.startsWith('❌ Disconnect ')) {
-      const toRemove = text.replace('❌ Disconnect ', '').trim();
-      const channels = await db.getConnectedChats(env);
-      const remaining = channels.filter((c) => (c.title || c.target) !== toRemove && c.target !== toRemove);
-      await db.saveConnectedChats(remaining, env);
-      const chList = formatConnectedChatsList(remaining);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: `✅ Disconnected: <b>${escapeHtml(toRemove)}</b>\n\n<b>Connected Chats (${remaining.length}/3):</b>\n${chList}`,
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(remaining)
-      });
-    }
-
-    if (text === '📣 Broadcast') {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: '📣 <b>Broadcast Mode</b>\n\nSend <code>/broadcast Your message here</code> to broadcast an announcement to all registered users.',
-        parse_mode: 'HTML',
-        reply_markup: {
-          keyboard: [[{ text: 'Back' }]],
-          resize_keyboard: true
-        }
-      });
-    }
-
-    if (cmdToken === '/broadcast') {
-      const bcText = text.replace(/^\/broadcast\s+/i, '').trim();
-      if (!bcText) {
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: '⚠️ Please provide a message: <code>/broadcast Hello users!</code>',
-          parse_mode: 'HTML'
-        });
-      }
-      const userIds = await db.getAllUserIds(env);
-      let sent = 0;
-      let failed = 0;
-      for (const uid of userIds) {
-        try {
-          const r = await tgCall(token, 'sendMessage', {
-            chat_id: uid,
-            text: bcText,
-            parse_mode: 'HTML'
-          });
-          if (r?.ok) sent++; else failed++;
-        } catch {
-          failed++;
-        }
-      }
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: `📣 <b>Broadcast Completed!</b>\n\nDelivered: <b>${sent}</b>\nFailed: <b>${failed}</b>`,
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(await db.getConnectedChats(env))
-      });
-    }
-
-
-
-    if (cmdToken === '/channel' || cmdToken === '/setchannel') {
-      const parts = text.split(/\s+/);
-      const newChan = parts[1]?.trim();
-      if (!newChan) {
-        const channels = await db.getConnectedChats(env);
-        const chList = formatConnectedChatsList(channels);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text:
-            `<b>Connected Chats (${channels.length}/3):</b>\n${chList}\n\n` +
-            `Add channel: <code>/setchannel @YourChannel</code>\n` +
-            `Turn off all: <code>/setchannel off</code>`,
+            `<b>Broadcast Preview Above</b>\n` +
+            `Recipients: <b>${targetCount} ${userWord}</b>\n` +
+            `Auto Delete: <b>${formatAutoDeleteLabel(newMins)}</b>`,
+          parse_mode: 'HTML',
+          reply_markup: getBroadcastConfirmKeyboard(newMins)
+        });
+      }
+
+      if (['✅ Confirm', 'Confirm', 'Confirm & Send', '✅ Confirm & Send'].includes(text)) {
+        adminBroadcastState.delete(userId);
+        adminViewState.set(userId, 'PANEL');
+        const channels = await db.getConnectedChats(env);
+        await tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '⏳ <b>Broadcasting...</b>',
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+
+        const userIds = await db.getAllUserIds(env);
+        let sent = 0;
+        let failed = 0;
+        const delivered = [];
+
+        for (const uid of userIds) {
+          try {
+            const r = await tgCall(token, 'copyMessage', {
+              chat_id: uid,
+              from_chat_id: bcast.chat_id,
+              message_id: bcast.message_id
+            });
+            if (r?.ok && r.result?.message_id) {
+              sent++;
+              delivered.push({ chat_id: uid, message_id: r.result.message_id });
+            } else {
+              failed++;
+            }
+          } catch {
+            failed++;
+          }
+        }
+
+        if (bcast.auto_delete_mins > 0 && delivered.length > 0) {
+          bgTask((async () => {
+            await new Promise((r) => setTimeout(r, bcast.auto_delete_mins * 60 * 1000));
+            for (const d of delivered) {
+              await tgCall(token, 'deleteMessage', d).catch(() => {});
+            }
+          })(), ctx);
+        }
+
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `✅ <b>Broadcast Completed</b>\n` +
+            `Delivered: <b>${sent}</b>\n` +
+            `Failed: <b>${failed}</b>\n` +
+            `Auto Delete: <b>${formatAutoDeleteLabel(bcast.auto_delete_mins)}</b>`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
         });
       }
 
+      if (['❌ Cancel', 'Cancel', 'Back', '⬅️ Back', 'Admin', '⚙️ Admin'].includes(text)) {
+        if (bcast.preview_msg_id) {
+          await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: bcast.preview_msg_id }).catch(() => {});
+        }
+        adminBroadcastState.delete(userId);
+        return showAdminDashboard(chatId, token, env);
+      }
+
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'Tap <b>✅ Confirm</b> or <b>❌ Cancel</b> below.',
+        parse_mode: 'HTML',
+        reply_markup: getBroadcastConfirmKeyboard(bcast.auto_delete_mins || 10)
+      });
+    }
+  }
+
+  // Admin Navigation Handlers
+  if (isAdminUser) {
+    if (['Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin', 'Refresh', '🔄 Refresh', '⬅️ Back to Admin'].includes(text)) {
+      adminBroadcastState.delete(userId);
+      adminWaitingAddChat.delete(userId);
+      return showAdminDashboard(chatId, token, env);
+    }
+
+    if (['Back', 'Cancel', '❌ Cancel', '⬅️ Cancel', '⬅️ Back', '⬅️ Back to Menu'].includes(text)) {
+      adminBroadcastState.delete(userId);
+      adminWaitingAddChat.delete(userId);
+      if (adminViewState.get(userId) === 'SUBMENU') {
+        return showAdminDashboard(chatId, token, env);
+      } else {
+        adminViewState.set(userId, 'MAIN');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Exited',
+          reply_markup: getMainAdminKeyboard()
+        });
+      }
+    }
+
+    if (['Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group'].includes(text)) {
+      const channels = await db.getConnectedChats(env);
+      if (channels.length >= 3) {
+        adminWaitingAddChat.delete(userId);
+        adminViewState.set(userId, 'PANEL');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '⚠️ Limit reached (<b>3/3</b>).',
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+      } else {
+        adminWaitingAddChat.set(userId, true);
+        adminViewState.set(userId, 'SUBMENU');
+        const botUser = (await getBotTag(token)).replace(/^@/, '') || 'TheTikTokDownloaderBot';
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `📢 <b>Connect Channel or Group:</b>\n\n` +
+            `1. Add @${botUser} as an <b>Administrator</b> in your channel or group.\n` +
+            `2. Send the channel <b>@username</b>, <b>-100... ID</b>, or forward any post from it here.`,
+          parse_mode: 'HTML',
+          reply_markup: { keyboard: [[{ text: 'Back' }]], resize_keyboard: true }
+        });
+      }
+    }
+
+    if (['Disconnect', 'Disconnect Channel', '🗑️ Disconnect Channel', '🗑️ Disconnect'].includes(text)) {
+      const channels = await db.getConnectedChats(env);
+      if (!channels || channels.length === 0) {
+        adminViewState.set(userId, 'PANEL');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'No connected chats.',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+      }
+      adminViewState.set(userId, 'SUBMENU');
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '<b>Select to disconnect:</b>',
+        parse_mode: 'HTML',
+        reply_markup: getDisconnectKeyboard(channels)
+      });
+    }
+
+    if (text.startsWith('Disconnect ') || text.startsWith('❌ Disconnect ')) {
+      const prefix = text.startsWith('❌ Disconnect ') ? '❌ Disconnect ' : 'Disconnect ';
+      const targetDisp = text.slice(prefix.length).trim();
+      const channels = await db.getConnectedChats(env);
+      const remaining = channels.filter((c) => {
+        const disp = c.title || c.target;
+        return disp.trim().toLowerCase() !== targetDisp.toLowerCase() && c.target.toLowerCase() !== targetDisp.toLowerCase() && c.chat_key !== targetDisp;
+      });
+      if (remaining.length < channels.length) {
+        await db.saveConnectedChats(remaining, env);
+      }
+      if (remaining.length > 0) {
+        adminViewState.set(userId, 'SUBMENU');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `✅ Disconnected: <b>${escapeHtml(targetDisp)}</b>`,
+          parse_mode: 'HTML',
+          reply_markup: getDisconnectKeyboard(remaining)
+        });
+      } else {
+        adminViewState.set(userId, 'PANEL');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `✅ Disconnected: <b>${escapeHtml(targetDisp)}</b>`,
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(remaining)
+        });
+      }
+    }
+
+    if (['Broadcast', '📣 Broadcast'].includes(text)) {
+      adminViewState.set(userId, 'SUBMENU');
+      adminBroadcastState.set(userId, { stage: 'WAITING_MESSAGE', auto_delete_mins: 10 });
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: 'Send any message (text, photo, or video) to preview it.',
+        parse_mode: 'HTML',
+        reply_markup: {
+          keyboard: [[{ text: 'Back' }]],
+          resize_keyboard: true
+        }
+      });
+    }
+
+    if (['Activity', '📊 Activity', '🔄 Refresh Activity'].includes(text)) {
+      adminViewState.set(userId, 'SUBMENU');
+      const errors = await db.getRecentServerErrors(15, env);
+      if (errors && errors.length > 0) {
+        const issueBlocks = errors.map((err, idx) => {
+          const ts = err.created_at || '';
+          const rawUrl = err.url || '';
+          const linkStr = rawUrl.startsWith('http') ? `<a href="${escapeHtml(rawUrl)}">Click Here</a>` : '<b>Unavailable</b>';
+          const reason = err.error_message || err.error_type || 'Server error';
+          const shortReason = escapeHtml(reason.slice(0, 100));
+          return (
+            `<blockquote>` +
+            `${idx + 1}. <b>${escapeHtml(err.platform || 'TikTok')} Issue</b>\n` +
+            `Link: ${linkStr}\n` +
+            `Reason: <b>${shortReason}</b>\n` +
+            `Time: <b>${escapeHtml(ts)}</b>` +
+            `</blockquote>`
+          );
+        });
+
+        const activityText = `⚠️ <b>Issues (${errors.length}):</b>\n\n${issueBlocks.join('\n\n')}`;
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: activityText.slice(0, 4000),
+          parse_mode: 'HTML',
+          disable_web_page_preview: true,
+          reply_markup: {
+            keyboard: [
+              [{ text: '📄 Logs' }, { text: '🗑️ Clear Logs' }],
+              [{ text: 'Back' }]
+            ],
+            resize_keyboard: true
+          }
+        });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `📊 <b>System Activity</b>\n` +
+            `<blockquote>Status: <b>Healthy</b>\n` +
+            `Issues: <b>None</b></blockquote>`,
+          parse_mode: 'HTML',
+          reply_markup: {
+            keyboard: [
+              [{ text: '📄 Logs' }, { text: 'Back' }]
+            ],
+            resize_keyboard: true
+          }
+        });
+      }
+    }
+
+    if (['Clear Logs', '🗑️ Clear Logs'].includes(text)) {
+      await db.clearServerErrors(env);
+      adminViewState.set(userId, 'PANEL');
+      const channels = await db.getConnectedChats(env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '✅ Logs cleared.',
+        reply_markup: getAdminPanelKeyboard(channels)
+      });
+    }
+
+    if (['Logs', '📄 Logs', '/logs', '/getlogs'].includes(text)) {
+      const errors = await db.getRecentServerErrors(100, env);
+      const logLines = errors.map((e, i) => `#${i + 1} [${e.created_at}] ${e.platform}: ${e.error_message} (${e.url})`).join('\n') || 'No errors logged.';
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `<b>System Logs:</b>\n<pre>${escapeHtml(logLines.slice(0, 3900))}</pre>`,
+        parse_mode: 'HTML'
+      });
+    }
+
+    // Manual text / forward adding when waiting
+    if (adminWaitingAddChat.get(userId)) {
+      let targetCh = null;
+      let targetTitle = null;
+      const fwdChat = msg.forward_from_chat;
+      if (fwdChat) {
+        targetCh = fwdChat.username ? `@${fwdChat.username}` : String(fwdChat.id);
+        targetTitle = fwdChat.title;
+      } else if (text.startsWith('@') || text.startsWith('-100')) {
+        targetCh = text.trim().split(/\s+/)[0];
+      } else {
+        const tme = text.trim().match(/^(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([A-Za-z0-9_]{4,})\/?$/i);
+        if (tme) targetCh = `@${tme[1]}`;
+      }
+
+      if (targetCh) {
+        adminWaitingAddChat.delete(userId);
+        adminViewState.set(userId, 'PANEL');
+        const channels = await db.getConnectedChats(env);
+        if (channels.length >= 3) {
+          return tgCall(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '⚠️ Limit reached (<b>3/3</b>).',
+            parse_mode: 'HTML',
+            reply_markup: getAdminPanelKeyboard(channels)
+          });
+        }
+
+        try {
+          const cInfo = await tgCall(token, 'getChat', { chat_id: targetCh });
+          if (cInfo?.ok && cInfo.result) {
+            targetTitle = cInfo.result.title || targetTitle || targetCh;
+          }
+        } catch {}
+
+        const title = targetTitle || targetCh;
+        if (!channels.some((c) => c.target === targetCh || c.chat_key === targetCh)) {
+          channels.push({ target: targetCh, title, chat_key: targetCh });
+          await db.saveConnectedChats(channels, env);
+        }
+        const chList = formatConnectedChatsList(channels);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `✅ Connected: <b>${escapeHtml(title)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '⚠️ Please send a valid channel <b>@username</b>, <b>-100... ID</b>, or forward a message from the channel.\n\nTap <b>Back</b> to cancel.',
+          parse_mode: 'HTML',
+          reply_markup: { keyboard: [[{ text: 'Back' }]], resize_keyboard: true }
+        });
+      }
+    }
+
+    if (cmdToken === '/channel' || cmdToken === '/setchannel') {
+      const parts = text.split(/\s+/);
+      const newChan = parts[1]?.trim();
+      if (!newChan) {
+        return showAdminDashboard(chatId, token, env);
+      }
       if (newChan.toLowerCase() === 'off') {
         await db.saveConnectedChats([], env);
-        await db.setSetting('force_sub_channel', 'off', env);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text: 'Force-sub channel disabled.',
           reply_markup: getAdminPanelKeyboard([])
         });
       }
-
       const formatted = newChan.startsWith('@') || newChan.startsWith('-') || newChan.startsWith('https://')
         ? newChan
         : '@' + newChan;
-
       const channels = await db.getConnectedChats(env);
       if (!channels.some((c) => c.target === formatted)) {
         if (channels.length >= 3) channels.shift();
         channels.push({ target: formatted, title: formatted, chat_key: formatted });
         await db.saveConnectedChats(channels, env);
       }
-      await db.setSetting('force_sub_channel', formatted, env);
-
       const chList = formatConnectedChatsList(channels);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
@@ -704,35 +1002,34 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         `<blockquote>Download videos and audio from TikTok.</blockquote>\n\n` +
         `Send a link to download.`;
 
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: welcome,
-        parse_mode: 'HTML',
-        reply_markup: isAdminUser ? getMainAdminKeyboard() : undefined
-      });
+      if (isAdminUser) {
+        adminViewState.set(userId, 'MAIN');
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: welcome,
+          parse_mode: 'HTML',
+          reply_markup: getMainAdminKeyboard()
+        });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: welcome,
+          parse_mode: 'HTML'
+        });
+      }
     }
   }
 
-  // Cross-Platform Routing & Cross-Promotion
-  const IG_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|instagr\.am)\/[^\s]+/i;
-  const FB_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:facebook\.com|fb\.watch|fb\.gg|fb\.com)\/[^\s]+/i;
+  // Smart URL Classifier & Cross-Platform Routing
+  const IG_FB_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|instagr\.am|facebook\.com|fb\.watch|fb\.gg|fb\.com)\/[^\s]+/i;
   const YT_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:youtube\.com|youtu\.be)\/[^\s]+/i;
   const OTHER_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:x\.com|twitter\.com|pinterest\.com|pin\.it|reddit\.com|threads\.net)\/[^\s]+/i;
 
-  if (IG_REGEX.test(text)) {
+  if (IG_FB_REGEX.test(text)) {
+    const isIg = /instagram\.com|instagr\.am/i.test(text);
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: '📸 Instagram not supported.',
-      reply_markup: {
-        inline_keyboard: [[{ text: '🎬 Insta & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]]
-      }
-    });
-  }
-
-  if (FB_REGEX.test(text)) {
-    return tgCall(token, 'sendMessage', {
-      chat_id: chatId,
-      text: '📘 Facebook not supported.',
+      text: isIg ? '📸 Instagram not supported.' : '📘 Facebook not supported.',
       reply_markup: {
         inline_keyboard: [[{ text: '🎬 Insta & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]]
       }
@@ -773,8 +1070,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
-  // 4. Force-Subscription Verification Gate (for user downloads)
-  const userId = msg.from?.id;
+  if (isAdminUser) {
+    adminViewState.set(userId, 'MAIN');
+  }
+
+  // Force-Subscribe Verification Gate (Shows only unjoined channels)
   const connectedChats = await db.getConnectedChats(env);
   if (connectedChats.length > 0 && userId && userId !== adminId) {
     const isVerified = db.isUserVerifiedMemory(userId);
@@ -792,13 +1092,17 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           const chUrl = ch.target.startsWith('https://')
             ? ch.target
             : `https://t.me/${ch.target.replace(/^@/, '')}`;
-          return [{ text: `📢 Join ${ch.title || ch.target}`, url: chUrl }];
+          const label = ch.target.startsWith('-') ? '👥 Join Group' : '📢 Join Channel';
+          return [{ text: label, url: chUrl }];
         });
-        buttons.push([{ text: '✅ I have joined', callback_data: 'check_sub' }]);
+        buttons.push([{ text: '✅ Joined', callback_data: 'verify_sub' }]);
 
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'To download this video, please join our channel first.',
+          text:
+            '🔒 <b>Verification Required</b>\n\n' +
+            '<blockquote>Please join our connected channels below to continue your download.</blockquote>',
+          parse_mode: 'HTML',
           reply_markup: {
             inline_keyboard: buttons
           }
@@ -1070,24 +1374,48 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
     }
   } catch (err) {
     console.error('TikTok delivery error:', err);
-    if (activeStatusId) {
-      const lowErr = String(err?.message || '').toLowerCase();
-      if (lowErr.includes('private') || lowErr.includes('restricted')) {
-        await tgCall(token, 'editMessageText', {
-          chat_id: chatId,
-          message_id: activeStatusId,
-          text: '⚠️ This video is private or restricted.',
-          parse_mode: 'HTML'
-        }).catch(() => {});
-      } else {
-        await tgCall(token, 'editMessageText', {
-          chat_id: chatId,
-          message_id: activeStatusId,
-          text: '⚠️ <b>Download failed due to server issue</b>\nPlease try again later.',
-          parse_mode: 'HTML'
-        }).catch(() => {});
-      }
+    const rawErr = String(err?.message || '');
+    const lowErr = rawErr.toLowerCase();
+
+    let failText = '⚠️ Server error, please try again.';
+    let errType = 'ServerError';
+
+    if (lowErr.includes('not found') || lowErr.includes('deleted') || lowErr.includes('404')) {
+      failText = '🗑️ Video not found or deleted.';
+      errType = 'NotFound';
+    } else if (lowErr.includes('private') || lowErr.includes('restricted') || lowErr.includes('login') || lowErr.includes('empty media response')) {
+      failText = '🔒 Video is private, age-restricted, or requires login.';
+      errType = 'PrivateRestricted';
+    } else if (lowErr.includes('unsupported link') || lowErr.includes('invalid link')) {
+      failText = '⚠️ Unsupported link format.';
+      errType = 'UnsupportedLink';
     }
+
+    if (activeStatusId) {
+      await tgCall(token, 'editMessageText', {
+        chat_id: chatId,
+        message_id: activeStatusId,
+        text: failText,
+        parse_mode: 'HTML'
+      }).catch(() => {});
+    } else {
+      await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: failText,
+        parse_mode: 'HTML'
+      }).catch(() => {});
+    }
+
+    // Persist error to DB for Admin Activity / Logs
+    bgTask(db.logServerError({
+      userId: fromUser?.id || chatId,
+      username: fromUser?.username ? `@${fromUser.username}` : (fromUser?.first_name || ''),
+      url: tiktokUrl,
+      errorType: errType,
+      errorMessage: rawErr,
+      platform: 'TikTok'
+    }, env), ctx);
+
   } finally {
     if (releaseInFlight) {
       releaseInFlight();
@@ -1395,7 +1723,7 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
   const data = cb.data;
   if (!data) return;
 
-  if (data === 'check_sub') {
+  if (data === 'verify_sub' || data === 'check_sub') {
     const userId = cb.from?.id;
     const chatId = cb.message?.chat?.id;
     const connectedChats = await db.getConnectedChats(env);
@@ -1406,10 +1734,9 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
     }
 
     if (missing.length > 0) {
-      const missingName = missing[0].title || missing[0].target;
       return tgCall(token, 'answerCallbackQuery', {
         callback_query_id: cb.id,
-        text: `Please join ${missingName} first!`,
+        text: 'ℹ️ Join channel first',
         show_alert: true
       });
     }
@@ -1417,26 +1744,32 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
     db.setUserVerifiedMemory(userId);
     await tgCall(token, 'answerCallbackQuery', {
       callback_query_id: cb.id,
-      text: 'Verified! Starting download...'
+      text: 'Verified!'
     });
-
-    if (cb.message?.message_id) {
-      await tgCall(token, 'deleteMessage', {
-        chat_id: chatId,
-        message_id: cb.message.message_id
-      }).catch(() => {});
-    }
 
     const pendingUrl = db.getPendingLink(userId);
     db.clearPendingLink(userId);
 
     if (pendingUrl) {
-      return processTikTokDownload(pendingUrl, chatId, cb.from, token, env, ctx);
+      if (cb.message?.message_id) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: cb.message.message_id,
+          text: '░░░░░░░░░░ <b>0%</b>',
+          parse_mode: 'HTML'
+        }).catch(() => {});
+      }
+      return processTikTokDownload(pendingUrl, chatId, cb.from, token, env, ctx, cb.message?.message_id);
     } else {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: 'You are now verified! Send any TikTok link to download.'
-      });
+      if (cb.message?.message_id) {
+        await tgCall(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: cb.message.message_id,
+          text: '✅ Verified! Send a link to download.',
+          parse_mode: 'HTML'
+        }).catch(() => {});
+      }
+      return;
     }
   }
 
