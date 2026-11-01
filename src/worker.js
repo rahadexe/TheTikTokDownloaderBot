@@ -88,7 +88,7 @@ export function checkUserRateLimit(userId, numLinks = 1) {
  * Resolves ANY new vt.tiktok.com / vm.tiktok.com / /t/ link to its canonical TikTok video_id
  * BEFORE calling external scrapers : so different share links for an already-cached video forward instantly!
  */
-async function resolveShortLinkIdFast(tiktokUrl) {
+async function resolveShortLinkIdFast(tiktokUrl, timeoutMs = 3500) {
   try {
     const u = new URL(tiktokUrl);
     const host = u.hostname.toLowerCase();
@@ -103,7 +103,7 @@ async function resolveShortLinkIdFast(tiktokUrl) {
       method: 'HEAD',
       redirect: 'manual',
       headers: { 'User-Agent': BROWSER_UA },
-      signal: AbortSignal.timeout(3500)
+      signal: AbortSignal.timeout(timeoutMs)
     });
     const loc = res.headers.get('location') || '';
     const match = loc.match(/\/(?:video|photo|v)\/([0-9]+)/i) || loc.match(/[?&](?:item_id|share_item_id)=([0-9]+)/i);
@@ -882,7 +882,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   // 4. Inline Queries
   if (update.inline_query) {
-    return handleInlineQuery(update.inline_query, token, env);
+    return handleInlineQuery(update.inline_query, token, env, ctx);
   }
 
   // 5. Regular Messages
@@ -1549,7 +1549,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       });
     }
     if (payloadPart.startsWith('dl_')) {
-      let pendingUrl = inlinePendingDownloads.get(payloadPart);
+      let pendingUrl = inlinePendingDownloads.get(payloadPart) || (await db.getCachedShortLink(payloadPart, env));
       if (!pendingUrl) {
         const mVid = payloadPart.match(/^dl_(\d+)$/);
         const mVm = payloadPart.match(/^dl_vm_([a-zA-Z0-9_-]+)$/);
@@ -1557,7 +1557,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         const mT = payloadPart.match(/^dl_t_([a-zA-Z0-9_-]+)$/);
         const mU = payloadPart.match(/^dl_u_([a-zA-Z0-9_-]+)$/);
         if (mVid) {
-          pendingUrl = `https://www.tiktok.com/@video/video/${mVid[1]}`;
+          pendingUrl = `https://www.tiktok.com/@a/video/${mVid[1]}`;
         } else if (mVm) {
           pendingUrl = `https://vm.tiktok.com/${mVm[1]}/`;
         } else if (mVt) {
@@ -1642,6 +1642,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   // Detect TikTok link (strictly 1 link per message)
   const tiktokUrls = extractAllTikTokUrls(text, 1);
   if (tiktokUrls.length === 0) {
+    if (msg.via_bot) return;
     if (msg.chat?.type === "private" && !text.startsWith("/")) {
       const anyUrl = /https?:\/\/[^\s]+/i.test(text);
       if (anyUrl) {
@@ -2197,9 +2198,19 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     data.wmUrl
   ]);
 
+  let cachedThumbBlob = undefined;
+  const ensureThumbBlob = async (thumbUrl, cookies) => {
+    if (cachedThumbBlob !== undefined) return cachedThumbBlob;
+    cachedThumbBlob = await fetchThumbnailBlob(thumbUrl || data.thumbnail, cookies || data.cookies);
+    return cachedThumbBlob;
+  };
+
   for (const streamUrl of binaryCandidates) {
     if (tracker) await tracker.update(70, false);
-    const media = await fetchMediaStream(streamUrl, 'video/mp4', MIN_VIDEO_BYTES, data.cookies);
+    const [media, thumbBlob] = await Promise.all([
+      fetchMediaStream(streamUrl, 'video/mp4', MIN_VIDEO_BYTES, data.cookies),
+      ensureThumbBlob(data.thumbnail, data.cookies)
+    ]);
     if (media?.tooLarge) {
       sawTooLarge = true;
       continue;
@@ -2210,7 +2221,8 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     const enrichedMeta = {
       ...data,
       width: data.width || media.dims?.width,
-      height: data.height || media.dims?.height
+      height: data.height || media.dims?.height,
+      thumbBlob
     };
 
     sent = await uploadVideoMultipart(token, chatId, media.blob, safeTitle, botTag, data.id, enrichedMeta, replyToMsgId);
@@ -2225,7 +2237,10 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     if (tracker) await tracker.update(90, false);
     const directData = await extractFromTikTokDirect(originalUrl);
     if (directData?.videoUrl) {
-      const media = await fetchMediaStream(directData.videoUrl, 'video/mp4', MIN_VIDEO_BYTES, directData.cookies);
+      const [media, thumbBlob] = await Promise.all([
+        fetchMediaStream(directData.videoUrl, 'video/mp4', MIN_VIDEO_BYTES, directData.cookies),
+        fetchThumbnailBlob(directData.thumbnail || data.thumbnail, directData.cookies)
+      ]);
       if (media?.tooLarge) sawTooLarge = true;
       if (media?.blob) {
         if (!data.audioUrl && directData.audioUrl) data.audioUrl = directData.audioUrl;
@@ -2233,7 +2248,8 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
         const enrichedMeta = {
           ...directData,
           width: directData.width || media.dims?.width,
-          height: directData.height || media.dims?.height
+          height: directData.height || media.dims?.height,
+          thumbBlob
         };
         sent = await uploadVideoMultipart(
           token,
@@ -2258,14 +2274,18 @@ async function deliverVideoWithFallbacks(token, chatId, data, safeTitle, botTag,
     const tmData = await extractFromTikMate(originalUrl);
     if (tmData) {
       for (const tmUrl of uniqueStrings([tmData.videoUrl, tmData.hdUrl])) {
-        const media = await fetchMediaStream(tmUrl, 'video/mp4', MIN_VIDEO_BYTES);
+        const [media, thumbBlob] = await Promise.all([
+          fetchMediaStream(tmUrl, 'video/mp4', MIN_VIDEO_BYTES),
+          fetchThumbnailBlob(tmData.thumbnail || data.thumbnail)
+        ]);
         if (media?.tooLarge) sawTooLarge = true;
         if (media?.blob) {
           if (!data.id && tmData.id) data.id = tmData.id;
           const enrichedMeta = {
             ...tmData,
             width: tmData.width || media.dims?.width,
-            height: tmData.height || media.dims?.height
+            height: tmData.height || media.dims?.height,
+            thumbBlob
           };
           sent = await uploadVideoMultipart(
             token,
@@ -2327,6 +2347,7 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
   const replyMarkup = videoId
     ? JSON.stringify({ inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${videoId}` }]] })
     : null;
+  const thumbBlob = meta.thumbBlob || (meta.thumbnail ? await fetchThumbnailBlob(meta.thumbnail, meta.cookies) : null);
 
   const buildForm = (fieldName, captionText, useHtml) => {
     const fd = new FormData();
@@ -2339,6 +2360,7 @@ async function uploadVideoMultipart(token, chatId, videoBlob, safeTitle, botTag,
       if (meta.width) fd.append('width', String(meta.width));
       if (meta.height) fd.append('height', String(meta.height));
       if (meta.duration) fd.append('duration', String(Math.round(meta.duration)));
+      if (thumbBlob) fd.append('thumbnail', thumbBlob, 'thumb.jpg');
     }
     if (replyMarkup) fd.append('reply_markup', replyMarkup);
     if (replyToMsgId) {
@@ -2879,34 +2901,18 @@ async function uploadAudioMultipart(token, chatId, audioBlob, cleanTitle, botTag
  * Handle Inline Query (@botname link)
  * Uses cached Telegram file_id when available for 100% reliable delivery, else public tikwm proxy URL
  */
-async function handleInlineQuery(iq, token, env = {}) {
-  const rawQ = iq.query || '';
+async function handleInlineQuery(iq, token, env = {}, ctx = null) {
+  const rawQ = String(iq.query || '').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
   const q = rawQ.trim();
   const userId = iq.from?.id;
   const { adminId } = getBotConfig(env);
   const botTag = await getBotTag(token);
-  const botName = botTag.replace('@', '');
 
-  // 1. Force-Subscribe Verification Gate for Inline Queries (Only time switch_pm is used)
-  if (userId && userId !== adminId) {
-    const missing = await getUnjoinedChannels(token, userId, null, null, env);
-    if (missing.length > 0) {
-      return tgCall(token, 'answerInlineQuery', {
-        inline_query_id: iq.id,
-        switch_pm_text: '🔒 Click to Join and Download Video',
-        switch_pm_parameter: 'verify',
-        results: [],
-        cache_time: 1,
-        is_personal: true
-      });
-    }
-  }
-
-  // 2. Extract and Validate TikTok Link (All non-TikTok inputs, empty, or errors show '🔗 Paste TikTok link...')
-  const tiktokUrl = q ? extractTikTokUrl(q) : null;
-  if (!tiktokUrl) {
+  // 0. Instant response for empty query (0ms delay when user first types @bot)
+  if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
+      button: { text: '🔗 Paste TikTok link...', start_parameter: 'guide' },
       switch_pm_text: '🔗 Paste TikTok link...',
       switch_pm_parameter: 'guide',
       results: [],
@@ -2915,21 +2921,52 @@ async function handleInlineQuery(iq, token, env = {}) {
     });
   }
 
+  // 1. Force-Subscribe Verification Gate for Inline Queries (uses fast memory cache first)
+  if (userId && userId !== adminId && !db.isUserVerifiedMemory(userId)) {
+    const missing = await getUnjoinedChannels(token, userId, null, null, env);
+    if (missing.length > 0) {
+      return tgCall(token, 'answerInlineQuery', {
+        inline_query_id: iq.id,
+        button: { text: '🔒 Click to Join and Download Video', start_parameter: 'verify' },
+        switch_pm_text: '🔒 Click to Join and Download Video',
+        switch_pm_parameter: 'verify',
+        results: [],
+        cache_time: 1,
+        is_personal: true
+      });
+    }
+    db.setUserVerifiedMemory(userId);
+  }
+
+  // 2. Extract and Validate TikTok Link (All non-TikTok inputs show '🔗 Paste TikTok link...')
+  const tiktokUrl = extractTikTokUrl(q);
+  if (!tiktokUrl) {
+    return tgCall(token, 'answerInlineQuery', {
+      inline_query_id: iq.id,
+      button: { text: '🔗 Paste TikTok link...', start_parameter: 'guide' },
+      switch_pm_text: '🔗 Paste TikTok link...',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
+      is_personal: true
+    });
+  }
+
+  let cachedVidId = null;
   try {
     // 4. Fast Cache Check (Single-hop redirect, mapping, or direct video ID)
-    const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/video)\/([0-9]+)/);
-    let cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl, env);
+    const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/(?:video|photo)|post)\/([0-9]+)/i);
+    cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl, env);
     if (!cachedVidId) {
-      cachedVidId = await resolveShortLinkIdFast(tiktokUrl);
+      cachedVidId = await resolveShortLinkIdFast(tiktokUrl, 1200);
       if (cachedVidId) {
-        await db.setCachedShortLink(tiktokUrl, cachedVidId, env).catch(() => {});
+        bgTask(db.setCachedShortLink(tiktokUrl, cachedVidId, env), ctx);
       }
     }
 
     if (cachedVidId) {
       const cached = await db.getCachedVideo(cachedVidId, env);
       if (cached?.file_id) {
-        const safeTitle = formatCaptionTitle(cached.title, cached.author, 80) || 'TikTok Video';
         const { html: htmlCaption } = buildMediaCaption(cached.title, cached.author, botTag);
         return tgCall(token, 'answerInlineQuery', {
           inline_query_id: iq.id,
@@ -2939,7 +2976,7 @@ async function handleInlineQuery(iq, token, env = {}) {
               id: String(cachedVidId),
               video_file_id: cached.file_id,
               title: '🎬 TikTok Video',
-              description: '⚡ Instant Ready • Tap to share video',
+              description: 'Tap to share video',
               caption: htmlCaption,
               parse_mode: 'HTML'
             }
@@ -2949,49 +2986,48 @@ async function handleInlineQuery(iq, token, env = {}) {
         });
       }
     }
-
-    // 5. Uncached Link: Zero ugly cards! Sleek 1-click blue bar to Download in Bot
-    let tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
-    if (cachedVidId && /^\d+$/.test(cachedVidId)) {
-      tokenKey = `dl_${cachedVidId}`;
-    } else {
-      const vmMatch = tiktokUrl.match(/(?:vm|vt)\.tiktok\.com\/([a-zA-Z0-9_-]+)/i);
-      const tMatch = tiktokUrl.match(/tiktok\.com\/t\/([a-zA-Z0-9_-]+)/i);
-      const vidMatch = tiktokUrl.match(/\/(?:video|photo|v)\/([0-9]+)/i);
-      if (vidMatch) {
-        tokenKey = `dl_${vidMatch[1]}`;
-      } else if (vmMatch) {
-        tokenKey = `dl_vm_${vmMatch[1]}`;
-      } else if (tMatch) {
-        tokenKey = `dl_t_${tMatch[1]}`;
-      } else if (tiktokUrl.length <= 44) {
-        try {
-          const b64 = btoa(tiktokUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-          if (b64.length <= 59) {
-            tokenKey = `dl_u_${b64}`;
-          }
-        } catch (e) {}
-      }
-    }
-    inlinePendingDownloads.set(tokenKey, tiktokUrl);
-    return tgCall(token, 'answerInlineQuery', {
-      inline_query_id: iq.id,
-      switch_pm_text: '🎬 Process & Download Video',
-      switch_pm_parameter: tokenKey,
-      results: [],
-      cache_time: 1,
-      is_personal: true
-    });
-  } catch (err) {
-    return tgCall(token, 'answerInlineQuery', {
-      inline_query_id: iq.id,
-      switch_pm_text: '🔗 Paste TikTok link...',
-      switch_pm_parameter: 'guide',
-      results: [],
-      cache_time: 1,
-      is_personal: true
-    });
+  } catch (cacheErr) {
+    console.warn('Inline cache lookup warning:', cacheErr?.message || cacheErr);
   }
+
+  // 5. Uncached Link: Sleek 1-click blue bar to Process & Download Video in Bot
+  let tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
+  if (cachedVidId && /^\d+$/.test(cachedVidId)) {
+    tokenKey = `dl_${cachedVidId}`;
+  } else {
+    const vtMatch = tiktokUrl.match(/vt\.tiktok\.com\/([a-zA-Z0-9_-]+)/i);
+    const vmMatch = tiktokUrl.match(/vm\.tiktok\.com\/([a-zA-Z0-9_-]+)/i);
+    const tMatch = tiktokUrl.match(/tiktok\.com\/t\/([a-zA-Z0-9_-]+)/i);
+    const vidMatch = tiktokUrl.match(/\/(?:video|photo|v|post)\/([0-9]+)/i);
+    if (vidMatch) {
+      tokenKey = `dl_${vidMatch[1]}`;
+    } else if (vtMatch) {
+      tokenKey = `dl_vt_${vtMatch[1]}`;
+    } else if (vmMatch) {
+      tokenKey = `dl_vm_${vmMatch[1]}`;
+    } else if (tMatch) {
+      tokenKey = `dl_t_${tMatch[1]}`;
+    } else if (tiktokUrl.length <= 44) {
+      try {
+        const b64 = btoa(tiktokUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        if (b64.length <= 59) {
+          tokenKey = `dl_u_${b64}`;
+        }
+      } catch (e) {}
+    }
+  }
+  inlinePendingDownloads.set(tokenKey, tiktokUrl);
+  bgTask(db.setCachedShortLink(tokenKey, tiktokUrl, env), ctx);
+
+  return tgCall(token, 'answerInlineQuery', {
+    inline_query_id: iq.id,
+    button: { text: '🎬 Process & Download Video', start_parameter: tokenKey },
+    switch_pm_text: '🎬 Process & Download Video',
+    switch_pm_parameter: tokenKey,
+    results: [],
+    cache_time: 1,
+    is_personal: true
+  });
 }
 
 async function extractTikTokData(url) {
@@ -3064,7 +3100,9 @@ async function extractFromTikWM(url) {
           tikwmProxyUrl: !isPhoto && d.id ? `https://www.tikwm.com/video/media/play/${d.id}.mp4` : null,
           audioUrl: musicUrl,
           musicTitle: d.music_info?.title || d.title || 'TikTok Audio',
-          thumbnail: normalizeTikwmUrl(d.cover),
+          thumbnail: normalizeTikwmUrl(d.cover || d.origin_cover || d.ai_dynamic_cover),
+          width: Number(d.width || 0) || undefined,
+          height: Number(d.height || 0) || undefined,
           duration: Number(d.duration || 0),
           sizeBytes: Number(d.size || 0) || undefined,
           hdSizeBytes: Number(d.hd_size || 0) || undefined,
@@ -3083,10 +3121,10 @@ async function extractFromTikWM(url) {
 
 async function extractFromTikTokDirect(url) {
   try {
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       redirect: 'follow',
       headers: {
-        'User-Agent': MOBILE_UA,
+        'User-Agent': BROWSER_UA,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
       },
@@ -3095,28 +3133,61 @@ async function extractFromTikTokDirect(url) {
 
     if (!res.ok) return null;
 
-    let cookieHeader = '';
-    if (typeof res.headers.getSetCookie === 'function') {
-      const list = res.headers.getSetCookie();
-      if (Array.isArray(list) && list.length > 0) {
-        cookieHeader = list.map((c) => c.split(';')[0]).join('; ');
+    const extractCookies = (response) => {
+      let cHdr = '';
+      if (typeof response.headers.getSetCookie === 'function') {
+        const list = response.headers.getSetCookie();
+        if (Array.isArray(list) && list.length > 0) {
+          cHdr = list.map((c) => c.split(';')[0]).join('; ');
+        }
+      }
+      if (!cHdr) {
+        const rawCookie = response.headers.get('set-cookie');
+        if (rawCookie) {
+          cHdr = rawCookie
+            .split(/,(?=\s*[a-zA-Z0-9_-]+=)/)
+            .map((c) => c.split(';')[0].trim())
+            .join('; ');
+        }
+      }
+      return cHdr;
+    };
+
+    let cookieHeader = extractCookies(res);
+    let html = await res.text();
+    let match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+
+    // If short link redirected to a minimal stub page without rehydration script, re-fetch clean canonical URL
+    if (!match) {
+      const resolvedUrl = res.url || url;
+      const vidMatch =
+        resolvedUrl.match(/\/(?:video|photo|v|post)\/([0-9]+)/i) ||
+        resolvedUrl.match(/[?&](?:item_id|share_item_id)=([0-9]+)/i) ||
+        html.match(/\/(?:video|photo)\/([0-9]{15,22})/i);
+      if (vidMatch) {
+        const cleanUrl = `https://www.tiktok.com/@a/video/${vidMatch[1]}`;
+        const res2 = await fetch(cleanUrl, {
+          redirect: 'follow',
+          headers: {
+            'User-Agent': BROWSER_UA,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            ...(cookieHeader ? { Cookie: cookieHeader } : {})
+          },
+          signal: AbortSignal.timeout(8000)
+        });
+        if (res2.ok) {
+          const c2 = extractCookies(res2);
+          if (c2) cookieHeader = cookieHeader ? `${cookieHeader}; ${c2}` : c2;
+          html = await res2.text();
+          match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+        }
       }
     }
-    if (!cookieHeader) {
-      const rawCookie = res.headers.get('set-cookie');
-      if (rawCookie) {
-        cookieHeader = rawCookie
-          .split(/,(?=\s*[a-zA-Z0-9_-]+=)/)
-          .map((c) => c.split(';')[0].trim())
-          .join('; ');
-      }
-    }
+
+    if (!match) return null;
 
     const effectiveCookies = cookieHeader || 'ttwid=1; tt_csrf_token=1';
-
-    const html = await res.text();
-    const match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
-    if (!match) return null;
 
     const payload = JSON.parse(match[1]);
     const scope = payload?.__DEFAULT_SCOPE__ || {};
@@ -3191,7 +3262,7 @@ async function extractFromTikTokDirect(url) {
       fallbackUrl: downloadAddr,
       audioUrl: item.music?.playUrl || null,
       musicTitle: item.music?.title || item.desc || 'TikTok Audio',
-      thumbnail: item.video?.cover || item.video?.originCover || null,
+      thumbnail: item.video?.zoomCover?.['240'] || item.video?.zoomCover?.['480'] || item.video?.cover || item.video?.originCover || null,
       width: Number(item.video?.width || 0) || undefined,
       height: Number(item.video?.height || 0) || undefined,
       duration: Number(item.video?.duration || 0) || undefined,
@@ -3355,13 +3426,63 @@ async function fetchMediaBlob(streamUrl, mimeType, minBytes = MIN_VIDEO_BYTES, c
 }
 
 /**
+ * Fetch a Telegram-compliant JPEG thumbnail (< 200KB, <= 320px width & height)
+ * Required by Telegram Bot API when uploading videos via multipart/form-data so InlineQueryResultCachedVideo displays a preview image!
+ */
+async function fetchThumbnailBlob(thumbUrl, cookies = null) {
+  if (!thumbUrl || typeof thumbUrl !== 'string' || !thumbUrl.startsWith('http')) return null;
+
+  // 1. Primary: Resize & transcode to 240x320 JPEG (< 200KB) via wsrv.nl edge proxy (handles WebP/HEIC/large covers)
+  try {
+    const proxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(thumbUrl)}&w=240&h=320&fit=cover&output=jpg&q=80`;
+    const res = await fetch(proxyUrl, {
+      redirect: 'follow',
+      headers: { 'User-Agent': BROWSER_UA, 'Accept': 'image/jpeg,*/*' },
+      signal: AbortSignal.timeout(4000)
+    });
+    if (res.ok) {
+      const buf = await res.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      if (buf.byteLength >= 500 && buf.byteLength <= 200000 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+        return new Blob([buf], { type: 'image/jpeg' });
+      }
+    }
+  } catch {}
+
+  // 2. Fallback: Direct fetch if origin already serves a small JPEG (< 200KB)
+  try {
+    const headers = {
+      'User-Agent': BROWSER_UA,
+      'Accept': 'image/jpeg,*/*',
+      'Referer': 'https://www.tiktok.com/'
+    };
+    if (cookies) headers['Cookie'] = cookies;
+    const res2 = await fetch(thumbUrl, {
+      redirect: 'follow',
+      headers,
+      signal: AbortSignal.timeout(3500)
+    });
+    if (res2.ok) {
+      const buf2 = await res2.arrayBuffer();
+      const bytes2 = new Uint8Array(buf2);
+      if (buf2.byteLength >= 500 && buf2.byteLength <= 200000 && bytes2[0] === 0xff && bytes2[1] === 0xd8) {
+        return new Blob([buf2], { type: 'image/jpeg' });
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
  * URL Extractor, Validator & Sanitizer
  * Supports schemeless links (vt.tiktok.com/...), strips attached emojis/punctuation, and rejects non-media profile/discover pages
  */
 export function extractAllTikTokUrls(text, limit = 1) {
   if (!text || typeof text !== "string") return [];
+  const cleaned = text.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, "");
   const regex = /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/gi;
-  const matches = text.match(regex);
+  const matches = cleaned.match(regex);
   if (!matches) return [];
 
   const found = [];
@@ -3379,9 +3500,10 @@ export function extractAllTikTokUrls(text, limit = 1) {
 
 function extractTikTokUrl(text) {
   if (!text || typeof text !== 'string') return null;
+  const cleaned = text.replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/g, '');
 
   // Match full https://...tiktok.com/... OR schemeless (vt|vm|www|m).tiktok.com/...
-  const match = text.match(
+  const match = cleaned.match(
     /(?:https?:\/\/|(?:^|[\s(])(?=(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/))(?:[a-zA-Z0-9_-]+\.)?tiktok\.com\/[a-zA-Z0-9_./?=&%@#+-]+/i
   );
   if (!match) return null;
@@ -3415,13 +3537,13 @@ function extractTikTokUrl(text) {
       return `${u.origin}${path}/`;
     }
 
-    // Standard tiktok.com hosts: accept video, photo, /t/<code>, /v/<id>, /embed/..., /share/video/...
+    // Standard tiktok.com hosts: accept video, photo, post, /t/<code>, /v/<id>, /embed/..., /share/video|photo/...
     const isMediaPath =
-      /\/(?:video|photo)\/[0-9]+/i.test(path) ||
+      /\/(?:video|photo|post)\/[0-9]+/i.test(path) ||
       /^\/t\/[a-zA-Z0-9_-]+/i.test(path) ||
       /^\/v\/[0-9]+/i.test(path) ||
       /\/embed\/(?:v2\/)?[0-9]+/i.test(path) ||
-      /\/share\/video\/[0-9]+/i.test(path);
+      /\/share\/(?:video|photo)\/[0-9]+/i.test(path);
 
     if (isMediaPath) {
       const keepSlash = /^\/t\//i.test(path) ? '/' : '';

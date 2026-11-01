@@ -1562,7 +1562,7 @@ async function runTests() {
       cachedResult.type !== 'video' ||
       cachedResult.video_file_id !== 'BAACAgUAAxkBAA_INLINE_HASH_77' ||
       cachedResult.title !== '🎬 TikTok Video' ||
-      cachedResult.description !== '⚡ Instant Ready • Tap to share video' ||
+      cachedResult.description !== 'Tap to share video' ||
       !cachedResult.caption?.includes('<blockquote><b>Test Cached Inline Video</b></blockquote>')
     ) {
       throw new Error('Cached inline query did not return InlineQueryResultVideo with blockquote caption');
