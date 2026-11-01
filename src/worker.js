@@ -709,6 +709,7 @@ function extractInputTextWithEntities(msg) {
 const adminViewState = new Map(); // userId -> 'MAIN' | 'PANEL' | 'SUBMENU'
 const adminBroadcastState = new Map(); // userId -> { stage, chat_id, message_id, preview_msg_id, auto_delete_mins }
 const adminWaitingAddChat = new Map(); // userId -> boolean
+const adminCacheClearState = new Map(); // userId -> boolean
 const inlinePendingDownloads = new Map(); // token -> url
 
 export function getMainAdminKeyboard() {
@@ -784,9 +785,10 @@ export function getAdminPanelKeyboard(channels = []) {
   const rows = [addRow];
   if (channels.length > 0) {
     rows.push([{ text: '🗑️ Disconnect' }, { text: '📣 Broadcast' }]);
-    rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
+    rows.push([{ text: '📊 Activity' }, { text: '🗑️ Clear Cache Video' }]);
+    rows.push([{ text: 'Back' }]);
   } else {
-    rows.push([{ text: '📣 Broadcast' }]);
+    rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache Video' }]);
     rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
   }
 
@@ -923,6 +925,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       'Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group',
       'Disconnect', 'Disconnect Channel', '🗑️ Disconnect Channel', '🗑️ Disconnect',
       'Broadcast', '📣 Broadcast', 'Activity', '📊 Activity', '🔄 Refresh Activity',
+      'Clear Cache Video', '🗑️ Clear Cache Video', 'Clear Cache', '🗑️ Clear Cache',
       'Clear Logs', '🗑️ Clear Logs', 'Logs', '📄 Logs'
     ]);
 
@@ -1058,17 +1061,67 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
   }
 
+  // Admin Cache Clear Mode Handler
+  if (isAdminUser && adminCacheClearState.has(userId)) {
+    const adminNavButtons = new Set([
+      'Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin',
+      'Back', '⬅️ Back to Admin', '⬅️ Back', 'Cancel', '/cancel',
+      'Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group',
+      'Disconnect', 'Disconnect Channel', '🗑️ Disconnect Channel', '🗑️ Disconnect',
+      'Broadcast', '📣 Broadcast', 'Activity', '📊 Activity', '🔄 Refresh Activity',
+      'Clear Cache Video', '🗑️ Clear Cache Video', 'Clear Cache', '🗑️ Clear Cache',
+      'Clear Logs', '🗑️ Clear Logs', 'Logs', '📄 Logs'
+    ]);
+
+    if (['Back', '⬅️ Back to Admin', '⬅️ Back', 'Cancel', '/cancel', 'Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin'].includes(text)) {
+      adminCacheClearState.delete(userId);
+      return showAdminDashboard(chatId, token, env);
+    }
+
+    if (adminNavButtons.has(text) || text.startsWith('Disconnect ') || text.startsWith('❌ Disconnect ')) {
+      adminCacheClearState.delete(userId);
+      // Fall through to admin navigation below
+    } else {
+      const parsedUrl = extractTikTokUrl(text.trim());
+      let vid = parsedUrl ? (parsedUrl.match(/\/(?:video|photo|v|post)\/([0-9]+)/i)?.[1]) : null;
+      if (!vid && parsedUrl) {
+        vid = await resolveShortLinkIdFast(parsedUrl, 3000);
+      }
+      if (vid) {
+        await db.invalidateCachedMedia(vid, env);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `🗑️ <b>Cache Reset Successfully</b>\n\n` +
+            `<blockquote><b>TikTok Post:</b> <code>${escapeHtml(vid)}</code>\n` +
+            `Cached media removed.</blockquote>`,
+          parse_mode: 'HTML'
+        });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `⚠️ <b>Invalid Link</b>\n\n` +
+            `<blockquote>Please send a valid TikTok video link to clear cache.</blockquote>`,
+          parse_mode: 'HTML'
+        });
+      }
+    }
+  }
+
   // Admin Navigation Handlers
   if (isAdminUser) {
     if (['Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin', 'Refresh', '🔄 Refresh', '⬅️ Back to Admin'].includes(text)) {
       adminBroadcastState.delete(userId);
       adminWaitingAddChat.delete(userId);
+      adminCacheClearState.delete(userId);
       return showAdminDashboard(chatId, token, env);
     }
 
     if (['Back', 'Cancel', '❌ Cancel', '⬅️ Cancel', '⬅️ Back', '⬅️ Back to Menu'].includes(text)) {
       adminBroadcastState.delete(userId);
       adminWaitingAddChat.delete(userId);
+      adminCacheClearState.delete(userId);
       if (adminViewState.get(userId) === 'SUBMENU') {
         return showAdminDashboard(chatId, token, env);
       } else {
@@ -1081,7 +1134,24 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
+    if (['Clear Cache Video', '🗑️ Clear Cache Video', 'Clear Cache', '🗑️ Clear Cache'].includes(text)) {
+      adminBroadcastState.delete(userId);
+      adminWaitingAddChat.delete(userId);
+      adminViewState.set(userId, 'SUBMENU');
+      adminCacheClearState.set(userId, true);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text:
+          `🗑️ <b>Clear Video Cache</b>\n\n` +
+          `<blockquote>Send the video link to clear its cached media.\n` +
+          `You can send multiple links one by one.</blockquote>`,
+        parse_mode: 'HTML',
+        reply_markup: { keyboard: [[{ text: 'Back' }]], resize_keyboard: true }
+      });
+    }
+
     if (['Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group'].includes(text)) {
+      adminCacheClearState.delete(userId);
       const channels = await db.getConnectedChats(env);
       if (channels.length >= 3) {
         adminWaitingAddChat.delete(userId);
@@ -1626,8 +1696,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           text:
             `🗑️ <b>Cache Reset Successfully</b>\n\n` +
             `<blockquote><b>TikTok Post:</b> <code>${escapeHtml(vid)}</code>\n` +
-            `Cached media removed. Ready for fresh download.</blockquote>\n\n` +
-            `Send the link now to download fresh.`,
+            `Cached media removed.</blockquote>`,
           parse_mode: 'HTML'
         });
       }
