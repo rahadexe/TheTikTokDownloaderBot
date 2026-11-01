@@ -1623,14 +1623,20 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         await db.invalidateCachedMedia(vid, env);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: `🗑️ <b>Cache cleared for:</b>\n<code>${vid}</code>\n\nSend the link now to download fresh.`,
+          text:
+            `🗑️ <b>Cache Reset Successfully</b>\n\n` +
+            `<blockquote><b>TikTok Post:</b> <code>${escapeHtml(vid)}</code>\n` +
+            `Cached media removed. Ready for fresh download.</blockquote>\n\n` +
+            `Send the link now to download fresh.`,
           parse_mode: 'HTML'
         });
       }
     }
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: '💡 <b>Usage:</b> <code>/clearcache &lt;TikTok link&gt;</code>',
+      text:
+        `💡 <b>Clear Video Cache</b>\n\n` +
+        `<blockquote>Send <code>/clearcache &lt;TikTok link&gt;</code> to reset cached media.</blockquote>`,
       parse_mode: 'HTML'
     });
   }
