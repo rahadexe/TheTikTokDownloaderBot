@@ -1557,6 +1557,52 @@ async function runTests() {
     if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '🎬 Process & Download Video' || uncachedCall.payload?.results?.length !== 0) {
       throw new Error('Uncached inline query did not return "🎬 Process & Download Video" blue bar');
     }
+
+    // 20h. Tapping '🎬 Process & Download Video' triggers deep-link /start dl_... and starts downloading (not stuck on Welcome!)
+    const dlStartToken = uncachedCall.payload?.switch_pm_parameter;
+    const dlUserId = 77112299;
+    db.setUserVerifiedMemory(dlUserId);
+    const startCalls = [];
+    const prevFetch20h = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        startCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        if (urlStr.includes('/getChatMember')) {
+          return new Response(JSON.stringify({ ok: true, result: { status: 'member', is_member: true } }));
+        }
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 1234 } }));
+      }
+      return new Response(JSON.stringify({ ok: true }));
+    };
+
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 57,
+          message: {
+            message_id: 888999,
+            chat: { id: dlUserId, type: 'private' },
+            from: { id: dlUserId, first_name: 'InlineUser' },
+            text: `/start ${dlStartToken}`
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    globalThis.fetch = prevFetch20h;
+
+    const sentProgress = startCalls.some((c) => c.payload?.chat_id === dlUserId && c.payload?.text?.includes('0%'));
+    if (!sentProgress) {
+      throw new Error('/start dl_... did not start video download process');
+    }
+
     globalThis.fetch = prevFetch20;
     console.log('20. Comprehensive Inline Mode Suite (Force-Sub, Guide, Invalid, Cached & Processing Cards): PASSED');
 

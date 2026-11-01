@@ -889,7 +889,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  const text = extractInputTextWithEntities(msg) || '';
+  let text = extractInputTextWithEntities(msg) || '';
   const cmdToken = text.split(/\s+/)[0].split('@')[0].toLowerCase();
 
   // Admin Broadcast Composer Handler
@@ -1520,8 +1520,13 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       });
     }
     if (payloadPart.startsWith('dl_')) {
-      const pendingUrl = inlinePendingDownloads.get(payloadPart);
-      inlinePendingDownloads.delete(payloadPart);
+      let pendingUrl = inlinePendingDownloads.get(payloadPart);
+      if (!pendingUrl) {
+        const m = payloadPart.match(/^dl_(\d+)$/);
+        if (m) {
+          pendingUrl = `https://www.tiktok.com/@video/video/${m[1]}`;
+        }
+      }
       if (pendingUrl) {
         text = pendingUrl;
       } else {
@@ -1531,29 +1536,30 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           parse_mode: 'HTML'
         });
       }
-    }
-    const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
-    if (!deepTikTokUrl) {
-      const userName = msg.from?.first_name || 'there';
-      const welcome =
-        `👋 <b>Welcome, ${escapeHtml(userName)}!</b>\n\n` +
-        `<blockquote>Download videos and audio from TikTok.</blockquote>\n\n` +
-        `Send a link to download.`;
+    } else {
+      const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
+      if (!deepTikTokUrl) {
+        const userName = msg.from?.first_name || 'there';
+        const welcome =
+          `👋 <b>Welcome, ${escapeHtml(userName)}!</b>\n\n` +
+          `<blockquote>Download videos and audio from TikTok.</blockquote>\n\n` +
+          `Send a link to download.`;
 
-      if (isAdminUser) {
-        adminViewState.set(userId, 'MAIN');
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: welcome,
-          parse_mode: 'HTML',
-          reply_markup: getMainAdminKeyboard()
-        });
-      } else {
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: welcome,
-          parse_mode: 'HTML'
-        });
+        if (isAdminUser) {
+          adminViewState.set(userId, 'MAIN');
+          return tgCall(token, 'sendMessage', {
+            chat_id: chatId,
+            text: welcome,
+            parse_mode: 'HTML',
+            reply_markup: getMainAdminKeyboard()
+          });
+        } else {
+          return tgCall(token, 'sendMessage', {
+            chat_id: chatId,
+            text: welcome,
+            parse_mode: 'HTML'
+          });
+        }
       }
     }
   }
@@ -1652,7 +1658,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   const isQueued = (userActiveJobs.get(userId) || 0) > 0;
   userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
-
   let statusMsgId = null;
   try {
     const sm = await tgCall(token, 'sendMessage', {
@@ -2860,7 +2865,10 @@ async function handleInlineQuery(iq, token, env = {}) {
     }
 
     // 5. Uncached Link: Zero ugly cards! Sleek 1-click blue bar to Download in Bot
-    const tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
+    let tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
+    if (cachedVidId && /^\d+$/.test(cachedVidId)) {
+      tokenKey = `dl_${cachedVidId}`;
+    }
     inlinePendingDownloads.set(tokenKey, tiktokUrl);
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
