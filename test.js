@@ -1381,7 +1381,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const guideCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_guide_1');
-    if (!guideCall || guideCall.payload?.switch_pm_text !== '💡 Paste a TikTok link' || guideCall.payload?.results?.length !== 0) {
+    if (!guideCall || guideCall.payload?.switch_pm_text !== '🔗 Paste a TikTok link' || guideCall.payload?.results?.length !== 0) {
       throw new Error('Empty inline query did not return clean blue bar hint');
     }
 
@@ -1501,7 +1501,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const invalidCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_invalid_5');
-    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '🔗 Send a TikTok link' || invalidCall.payload?.results?.length !== 0) {
+    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '🔗 Paste a TikTok link' || invalidCall.payload?.results?.length !== 0) {
       throw new Error('Invalid query in TikTok inline query did not return blue bar');
     }
 

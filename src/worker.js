@@ -2812,7 +2812,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '💡 Paste a TikTok link',
+      switch_pm_text: '🔗 Paste a TikTok link',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
@@ -2850,7 +2850,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '🔗 Send a TikTok link',
+      switch_pm_text: '🔗 Paste a TikTok link',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
