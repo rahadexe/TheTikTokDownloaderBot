@@ -2808,45 +2808,8 @@ async function handleInlineQuery(iq, token, env = {}) {
     }
   }
 
-  // 2. Empty Query (@bot without link) -> Clean floating blue bar hint (ZERO cards)
-  if (!q) {
-    return tgCall(token, 'answerInlineQuery', {
-      inline_query_id: iq.id,
-      switch_pm_text: '🔗 Paste a TikTok link',
-      switch_pm_parameter: 'guide',
-      results: [],
-      cache_time: 1,
-      is_personal: true
-    });
-  }
-
-  // 3. Smart Platform Classifier for Non-TikTok links
-  // 3a. Instagram or Facebook Link Detected -> Direct switch to IG/FB bot via PM
-  if (/(?:instagram\.com|facebook\.com|fb\.watch)/i.test(q)) {
-    return tgCall(token, 'answerInlineQuery', {
-      inline_query_id: iq.id,
-      switch_pm_text: '📸 Open IG & FB Bot',
-      switch_pm_parameter: 'igfb',
-      results: [],
-      cache_time: 1,
-      is_personal: true
-    });
-  }
-
-  // 3b. YouTube Link Detected
-  if (/(?:youtube\.com|youtu\.be)/i.test(q)) {
-    return tgCall(token, 'answerInlineQuery', {
-      inline_query_id: iq.id,
-      switch_pm_text: '▶️ YouTube Not Supported',
-      switch_pm_parameter: 'yt',
-      results: [],
-      cache_time: 1,
-      is_personal: true
-    });
-  }
-
-  // 3c. Extract and Validate TikTok Link (or non-URL query like 'hi')
-  const tiktokUrl = extractTikTokUrl(q);
+  // 2. Extract and Validate TikTok Link (All non-TikTok inputs, empty, or errors show '🔗 Paste a TikTok link')
+  const tiktokUrl = q ? extractTikTokUrl(q) : null;
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
@@ -2909,7 +2872,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   } catch (err) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '⚠️ Server error, try again',
+      switch_pm_text: '🔗 Paste a TikTok link',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
