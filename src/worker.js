@@ -633,7 +633,7 @@ export function getAdminPanelKeyboard(channels = []) {
     can_post_stories: false,
     can_edit_stories: false,
     can_delete_stories: false,
-    can_post_messages: true,
+    can_post_messages: false,
     can_edit_messages: false
   };
   const grpRights = {
