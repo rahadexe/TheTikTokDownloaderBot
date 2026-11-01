@@ -1529,12 +1529,14 @@ async function runTests() {
       !cachedResult ||
       cachedResult.type !== 'video' ||
       cachedResult.video_file_id !== 'BAACAgUAAxkBAA_INLINE_HASH_77' ||
+      cachedResult.title !== '🎬 TikTok Video' ||
+      cachedResult.description !== '⚡ Instant Ready • Tap to share video' ||
       !cachedResult.caption?.includes('<blockquote><b>Test Cached Inline Video</b></blockquote>')
     ) {
       throw new Error('Cached inline query did not return InlineQueryResultVideo with blockquote caption');
     }
 
-    // 20g. Uncached video query -> returns clean '📥 Click to Download in Bot' blue bar
+    // 20g. Uncached video query -> returns clean '🎬 Process & Download Video' blue bar
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1552,8 +1554,8 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const uncachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_uncached_7');
-    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '📥 Download in Bot' || uncachedCall.payload?.results?.length !== 0) {
-      throw new Error('Uncached inline query did not return "📥 Click to Download in Bot" blue bar');
+    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '🎬 Process & Download Video' || uncachedCall.payload?.results?.length !== 0) {
+      throw new Error('Uncached inline query did not return "🎬 Process & Download Video" blue bar');
     }
     globalThis.fetch = prevFetch20;
     console.log('20. Comprehensive Inline Mode Suite (Force-Sub, Guide, Invalid, Cached & Processing Cards): PASSED');

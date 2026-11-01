@@ -2844,7 +2844,8 @@ async function handleInlineQuery(iq, token, env = {}) {
               type: 'video',
               id: String(cachedVidId),
               video_file_id: cached.file_id,
-              title: safeTitle,
+              title: '🎬 TikTok Video',
+              description: '⚡ Instant Ready • Tap to share video',
               caption: htmlCaption,
               parse_mode: 'HTML',
               reply_markup: {
@@ -2863,7 +2864,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     inlinePendingDownloads.set(tokenKey, tiktokUrl);
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '📥 Download in Bot',
+      switch_pm_text: '🎬 Process & Download Video',
       switch_pm_parameter: tokenKey,
       results: [],
       cache_time: 1,
