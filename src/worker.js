@@ -923,7 +923,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       'Add Channel', 'Add Group', '📢 Add Channel', '👥 Add Group',
       'Disconnect', 'Disconnect Channel', '🗑️ Disconnect Channel', '🗑️ Disconnect',
       'Broadcast', '📣 Broadcast', 'Activity', '📊 Activity', '🔄 Refresh Activity',
-      'Clear Logs', '🗑️ Clear Logs', 'Logs', '📄 Logs', '/logs', '/getlogs'
+      'Clear Logs', '🗑️ Clear Logs', 'Logs', '📄 Logs'
     ]);
 
     if (adminNavButtons.has(text) || text.startsWith('Disconnect ') || text.startsWith('❌ Disconnect ')) {
@@ -1234,7 +1234,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       });
     }
 
-    if (['Logs', '📄 Logs', '/logs', '/getlogs'].includes(text)) {
+    if (['Logs', '📄 Logs', 'Download Logs', '📄 Download Logs'].includes(text)) {
       const now = new Date();
       const nowStr = now.toISOString().replace('T', ' ').slice(0, 19);
       const fileTimestamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 15);
@@ -1290,8 +1290,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         const form = new FormData();
         form.append('chat_id', String(chatId));
         form.append('document', blob, `bot_system_logs_${fileTimestamp}.txt`);
-        form.append('caption', `📄 <b>System Audit Logs</b>\nTimestamp: <code>${nowStr}</code>\nStatus: <b>Healthy</b>`);
-        form.append('parse_mode', 'HTML');
 
         const sent = await tgCallMultipart(token, 'sendDocument', form);
         if (sent?.ok) {
