@@ -1496,7 +1496,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       const botTag = await getBotTag(token);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '💡 <b>How to Download:</b>\n\n<blockquote>1. Copy any video or photo link from TikTok.\n2. Send the link here, or type ' + botTag + ' in any chat to share!</blockquote>',
+        text:
+          '💡 <b>How to Download:</b>\n\n' +
+          '<blockquote><b>1. Copy Link:</b> Copy any video or photo link from TikTok.\n' +
+          '<b>2. Paste & Download:</b> Send the link here to download without watermark!\n' +
+          '<b>3. Share in Chats:</b> Type ' + botTag + ' in any chat to share videos directly.</blockquote>',
         parse_mode: 'HTML'
       });
     }
@@ -2868,10 +2872,7 @@ async function handleInlineQuery(iq, token, env = {}) {
               title: '🎬 TikTok Video',
               description: '⚡ Instant Ready • Tap to share video',
               caption: htmlCaption,
-              parse_mode: 'HTML',
-              reply_markup: {
-                inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${cachedVidId}` }]]
-              }
+              parse_mode: 'HTML'
             }
           ],
           cache_time: 300,
