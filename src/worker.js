@@ -1498,9 +1498,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         chat_id: chatId,
         text:
           '💡 <b>How to Download:</b>\n\n' +
-          '<blockquote><b>1. Copy Link:</b> Copy any video or photo link from TikTok.\n' +
-          '<b>2. Paste & Download:</b> Send the link here to download without watermark!\n' +
-          '<b>3. Share in Chats:</b> Type ' + botTag + ' in any chat to share videos directly.</blockquote>',
+          '<blockquote>1. Copy any video or photo link from TikTok.\n' +
+          '2. Send the link here to download instantly!\n' +
+          '3. Type ' + botTag + ' in any chat to share videos directly.</blockquote>',
         parse_mode: 'HTML'
       });
     }
@@ -1738,7 +1738,7 @@ export function resolveMediaTitle(videoTitle, musicTitle, fallback = "TikTok Aud
   return fallback;
 }
 
-export function formatCaptionTitle(rawTitle, author = null, maxChars = 80) {
+export function formatCaptionTitle(rawTitle, author = null, maxChars = 75) {
   if (!rawTitle) return '';
   let cleaned = String(rawTitle).trim();
   if (author) {
@@ -1751,14 +1751,14 @@ export function formatCaptionTitle(rawTitle, author = null, maxChars = 80) {
   if (cleaned.length > maxChars) {
     let cut = cleaned.slice(0, maxChars - 3);
     const lastSpace = cut.lastIndexOf(' ');
-    if (lastSpace >= 30) cut = cut.slice(0, lastSpace);
+    if (lastSpace >= 25) cut = cut.slice(0, lastSpace);
     cleaned = `${cut}...`;
   }
   return cleaned;
 }
 
 export function buildMediaCaption(title, author, botTag) {
-  const formatted = formatCaptionTitle(title, author, 80);
+  const formatted = formatCaptionTitle(title, author, 75);
   if (formatted) {
     return {
       html: `<blockquote><b>${escapeHtml(formatted)}</b></blockquote>\n\n${botTag}`,
