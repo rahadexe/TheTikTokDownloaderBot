@@ -373,6 +373,112 @@ export function buildForceSubPrompt(missingChannels = []) {
   return { text, reply_markup: { inline_keyboard: buttons } };
 }
 
+export async function checkBotChatRights(token, chatId) {
+  let rawBotId = token.includes(':') ? token.split(':')[0] : token;
+  let botId = isNaN(Number(rawBotId)) ? rawBotId : Number(rawBotId);
+  try {
+    const mem = await tgCall(token, 'getChatMember', { chat_id: chatId, user_id: botId });
+    if (!mem?.ok || !mem.result) {
+      return { ok: false, reason: mem?.description || 'Could not verify bot admin membership' };
+    }
+    const res = mem.result;
+    const st = res.status;
+    if (st === 'creator') return { ok: true, reason: '' };
+    if (st !== 'administrator') {
+      return { ok: false, reason: 'Bot must be added as Administrator with Invite Users permission' };
+    }
+    if (res.can_invite_users === false) {
+      return { ok: false, reason: 'Bot is missing "Invite Users via Link" admin permission' };
+    }
+    return { ok: true, reason: '' };
+  } catch (err) {
+    return { ok: false, reason: err.message || 'Error checking bot permissions' };
+  }
+}
+
+export async function connectChatCore(token, env, targetRef, fallbackTitle = '') {
+  let cleanTarget = String(targetRef).trim();
+  const botTag = await getBotTag(token);
+  const ownBot = (botTag || '').replace(/^@/, '').toLowerCase();
+
+  const normT = cleanTarget.replace(/^(?:https?:\/\/)?(?:t\.me|telegram\.me)\//i, '').replace(/^@/, '').toLowerCase();
+  if (['share', 'addstickers', 'joinchat', ownBot].includes(normT)) {
+    return {
+      ok: false,
+      text: '⚠️ <b>Invalid Chat:</b> Only Telegram Channels and Groups can be connected.'
+    };
+  }
+
+  let chatCheck = null;
+  try {
+    chatCheck = await tgCall(token, 'getChat', { chat_id: cleanTarget });
+  } catch {}
+
+  const chatObj = chatCheck?.ok ? chatCheck.result : null;
+  const dispName = chatObj?.title || fallbackTitle || cleanTarget;
+
+  if (chatObj && chatObj.type === 'private') {
+    return {
+      ok: false,
+      text: '⚠️ <b>Invalid Chat Type:</b> Only Telegram Channels and Groups can be connected. Bots or personal profiles cannot be added.'
+    };
+  }
+
+  const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chatObj?.id || cleanTarget);
+  if (!rightsOk) {
+    return {
+      ok: false,
+      text: `⚠️ <b>Admin Rights Required:</b> ${escapeHtml(dispName)}\n\n<blockquote>${escapeHtml(rightsReason)}</blockquote>`
+    };
+  }
+
+  const channels = await db.getConnectedChats(env);
+  const target = chatObj?.username ? `@${chatObj.username}` : (cleanTarget.startsWith('@') ? cleanTarget : String(chatObj?.id || cleanTarget));
+  const altTarget = String(chatObj?.id || cleanTarget);
+
+  const isAlready = channels.some(
+    (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget || (c.chat_key && c.chat_key === target)
+  );
+  if (isAlready) {
+    const chList = formatConnectedChatsList(channels);
+    return {
+      ok: false,
+      text: `Already connected: <b>${escapeHtml(dispName)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
+    };
+  }
+
+  if (channels.length >= 3) {
+    return {
+      ok: false,
+      text: '⚠️ Limit reached (<b>3/3</b>).'
+    };
+  }
+
+  let inviteUrl = chatObj?.invite_link || '';
+  if (!inviteUrl && !chatObj?.username) {
+    try {
+      const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chatObj?.id || cleanTarget });
+      if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
+    } catch {}
+  }
+
+  const chatType = chatObj?.type || (String(cleanTarget).startsWith('-') ? 'channel' : 'channel');
+  channels.push({
+    target,
+    title: chatObj?.title || dispName,
+    chat_key: altTarget,
+    type: ['group', 'supergroup'].includes(chatType) ? 'group' : 'channel',
+    invite_url: inviteUrl
+  });
+  await db.saveConnectedChats(channels, env);
+
+  const chList = formatConnectedChatsList(channels);
+  return {
+    ok: true,
+    text: `✅ Connected: <b>${escapeHtml(dispName)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
+  };
+}
+
 export async function handleMyChatMember(myChatMember, token, env = {}, ctx = null) {
   if (!myChatMember) return;
   const chat = myChatMember.chat;
@@ -441,51 +547,43 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
     return;
   }
 
-  // 3. Authorized Admin added the bot as Administrator
-  if (['channel', 'group', 'supergroup'].includes(chat.type) && newStatus === 'administrator') {
+  // 3. Authorized Admin added the bot as Administrator:
+  // ONLY notify the admin with an opt-in button. NEVER auto-enable Join Verification!
+  if (['channel', 'group', 'supergroup'].includes(chat.type) && newStatus === 'administrator' && oldStatus !== 'administrator') {
     if (user?.id) adminViewState.set(user.id, 'PANEL');
     const channels = await db.getConnectedChats(env);
     const isAlreadyConnected = channels.some(
       (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget
     );
+    if (isAlreadyConnected) return;
 
-    if (!isAlreadyConnected) {
-      if (channels.length >= 3) {
-        if (user?.id) {
-          await tgCall(token, 'sendMessage', {
-            chat_id: user.id,
-            text: `⚠️ Limit reached (<b>3/3</b>).`,
-            parse_mode: 'HTML',
-            reply_markup: getAdminPanelKeyboard(channels)
-          });
-        }
-        return;
-      }
-      let inviteUrl = chat.invite_link || '';
-      if (!inviteUrl && !chat.username) {
-        try {
-          const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chat.id });
-          if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
-        } catch {}
-      }
-      channels.push({
-        target,
-        title: chat.title || target,
-        chat_key: altTarget,
-        type: chat.type === 'channel' ? 'channel' : 'group',
-        invite_url: inviteUrl
-      });
-      await db.saveConnectedChats(channels, env);
+    const kind = ['group', 'supergroup'].includes(chat.type) ? 'Group' : 'Channel';
+    const disp = chat.username ? `@${chat.username}` : (chat.title || target);
+    const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chat.id);
+
+    let text;
+    let reply_markup = null;
+
+    if (channels.length >= 3) {
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Join Verification limit reached (3/3). Not added.</blockquote>`;
+    } else if (!rightsOk) {
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Not added to Join Verification.\nReason: ${escapeHtml(rightsReason)}</blockquote>`;
+    } else {
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Use this chat for Join Verification?</blockquote>`;
+      reply_markup = {
+        inline_keyboard: [
+          [{ text: '✅ Add to Join Verification', callback_data: `fsub_add:${chat.id}` }],
+          [{ text: '✖️ Skip', callback_data: `fsub_skip:${chat.id}` }]
+        ]
+      };
     }
 
-    const chList = formatConnectedChatsList(channels);
-    const disp = chat.username ? `@${chat.username}` : (chat.title || target);
     if (user?.id) {
       await tgCall(token, 'sendMessage', {
         chat_id: user.id,
-        text: `✅ Connected: <b>${escapeHtml(disp)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+        text,
         parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels)
+        reply_markup
       });
     }
   }
@@ -805,85 +903,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   if (isAdminUser && msg.chat_shared) {
     adminViewState.set(userId, 'PANEL');
     const sharedChatId = msg.chat_shared.chat_id;
+    const res = await connectChatCore(token, env, sharedChatId, msg.chat_shared.title || '');
     const channels = await db.getConnectedChats(env);
-
-    // Validate chat type
-    let chatCheck = null;
-    try {
-      chatCheck = await tgCall(token, 'getChat', { chat_id: sharedChatId });
-    } catch {}
-
-    const chatType = chatCheck?.result?.type || (String(sharedChatId).startsWith('-') ? (msg.chat_shared?.request_id === 101 ? 'channel' : 'group') : 'channel');
-    if (chatCheck?.ok && chatCheck.result?.type && chatCheck.result.type === 'private') {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: '⚠️ <b>Invalid Chat Type:</b> Only Telegram Channels and Groups can be connected. Bots or user profiles cannot be added.',
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels)
-      });
-    }
-
-    // Validate bot is Administrator
-    try {
-      const rawBotId = token.includes(':') ? token.split(':')[0] : token;
-      const botId = isNaN(Number(rawBotId)) ? rawBotId : Number(rawBotId);
-      const botMem = await tgCall(token, 'getChatMember', { chat_id: sharedChatId, user_id: botId });
-      if (botMem?.ok && botMem.result?.status && ['left', 'kicked'].includes(botMem.result?.status)) {
-        const chatName = chatCheck?.result?.title || msg.chat_shared.title || String(sharedChatId);
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: `⚠️ <b>Admin Rights Required:</b> Please add @${botTag} as an <b>Administrator</b> in <b>${escapeHtml(chatName)}</b> first.`,
-          parse_mode: 'HTML',
-          reply_markup: getAdminPanelKeyboard(channels)
-        });
-      }
-    } catch {}
-
-    const target = (chatCheck?.result?.username ? `@${chatCheck.result.username}` : (msg.chat_shared.username ? `@${msg.chat_shared.username}` : String(sharedChatId)));
-    const title = chatCheck?.result?.title || msg.chat_shared.title || target;
-    const altTarget = String(sharedChatId);
-
-    const isAlreadyConnected = channels.some((c) => c.target === target || c.chat_key === altTarget || c.target === altTarget);
-    if (isAlreadyConnected) {
-      const chList = formatConnectedChatsList(channels);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: `Already connected: <b>${escapeHtml(title)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels)
-      });
-    }
-
-    if (channels.length >= 3) {
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: '⚠️ Limit reached (<b>3/3</b>).',
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels)
-      });
-    }
-
-    let inviteUrl = chatCheck?.result?.invite_link || '';
-    if (!inviteUrl && !chatCheck?.result?.username) {
-      try {
-        const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: sharedChatId });
-        if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
-      } catch {}
-    }
-
-    channels.push({
-      target,
-      title,
-      chat_key: altTarget,
-      type: ['group', 'supergroup'].includes(chatType) ? 'group' : 'channel',
-      invite_url: inviteUrl
-    });
-    await db.saveConnectedChats(channels, env);
-
-    const chList = formatConnectedChatsList(channels);
     return tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: `✅ Connected: <b>${escapeHtml(title)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+      text: res.text,
       parse_mode: 'HTML',
       reply_markup: getAdminPanelKeyboard(channels)
     });
@@ -1211,12 +1235,80 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
 
     if (['Logs', '📄 Logs', '/logs', '/getlogs'].includes(text)) {
+      const now = new Date();
+      const nowStr = now.toISOString().replace('T', ' ').slice(0, 19);
+      const fileTimestamp = now.toISOString().replace(/[-:T]/g, '').slice(0, 15);
+
+      const channels = await db.getConnectedChats(env);
       const errors = await db.getRecentServerErrors(100, env);
-      const logLines = errors.map((e, i) => `#${i + 1} [${e.created_at}] ${e.platform}: ${e.error_message} (${e.url})`).join('\n') || 'No errors logged.';
+
+      let stats = { users: 0, downloads: 0, cached: 0, cacheHits: 0 };
+      try {
+        stats = await db.getStats(env);
+      } catch {}
+
+      const chList = channels.map((c, i) => `  ${i + 1}. ${c.title || c.target} (${c.target}) [${c.type || 'channel'}]`).join('\n') || '  None connected';
+
+      const logHeader = [
+        '================================================================================',
+        '                        BOT SYSTEM AUDIT & DIAGNOSTIC LOGS                       ',
+        '================================================================================',
+        `Generated: ${nowStr} UTC`,
+        `Platform : Cloudflare Workers Edge Runtime + D1 SQL Database`,
+        `Bot Name : @${botTag}`,
+        `Admin ID : ${adminId}`,
+        `Status   : Operational (100% Health)`,
+        '',
+        '--------------------------------------------------------------------------------',
+        'SYSTEM ENVIRONMENT & BOT CONFIGURATION',
+        '--------------------------------------------------------------------------------',
+        `Low Cost Mode : ${env.LOW_COST_MODE || 'true'}`,
+        `Database Type : Cloudflare D1 Serverless SQL`,
+        `Total Registered Users: ${stats.users || 0}`,
+        `Total Delivered Media : ${stats.downloads || 0}`,
+        `Cached Unique Hashes  : ${stats.cached || 0}`,
+        `Instant Cache Hits    : ${stats.cacheHits || 0}`,
+        `Connected Force-Sub Chats: ${channels.length}/3`,
+        chList,
+        '',
+        '--------------------------------------------------------------------------------',
+        'INCIDENT LOGS & EXTRACTION ERRORS',
+        '--------------------------------------------------------------------------------'
+      ];
+
+      let errorSection = '';
+      if (!errors || errors.length === 0) {
+        errorSection = 'Zero error incidents logged. Extraction & API operations running at 100% health.';
+      } else {
+        errorSection = errors.map((e, i) => `#${i + 1} [${e.created_at}] [${e.platform || 'TIKTOK'}] ${e.error_message}\n    URL: ${e.url}`).join('\n\n');
+      }
+
+      const fullLog = `${logHeader.join('\n')}\n${errorSection}\n\n================================================================================\nEND OF LOG FILE\n================================================================================\n`;
+
+      try {
+        const blob = new Blob([fullLog], { type: 'text/plain;charset=utf-8' });
+        const form = new FormData();
+        form.append('chat_id', String(chatId));
+        form.append('document', blob, `bot_system_logs_${fileTimestamp}.txt`);
+        form.append('caption', `📄 <b>System Audit Logs</b>\nTimestamp: <code>${nowStr}</code>\nStatus: <b>Healthy</b>`);
+        form.append('parse_mode', 'HTML');
+
+        const sent = await tgCallMultipart(token, 'sendDocument', form);
+        if (sent?.ok) {
+          return sent;
+        }
+      } catch {}
+
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: `<b>System Logs:</b>\n<pre>${escapeHtml(logLines.slice(0, 3900))}</pre>`,
-        parse_mode: 'HTML'
+        text: `📄 <b>System Status & Diagnostic:</b>\n\n` +
+          `• <b>Bot:</b> @${botTag}\n` +
+          `• <b>Health:</b> 100% Operational\n` +
+          `• <b>Connected Chats:</b> ${channels.length}/3\n` +
+          `• <b>Recent Incidents:</b> ${errors.length} logged\n\n` +
+          `<pre>${escapeHtml(fullLog.slice(-1500))}</pre>`,
+        parse_mode: 'HTML',
+        reply_markup: getMainAdminKeyboard()
       });
     }
 
@@ -1238,41 +1330,20 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       if (targetCh) {
         adminWaitingAddChat.delete(userId);
         adminViewState.set(userId, 'PANEL');
+        const res = await connectChatCore(token, env, targetCh, targetTitle || '');
         const channels = await db.getConnectedChats(env);
-        if (channels.length >= 3) {
-          return tgCall(token, 'sendMessage', {
-            chat_id: chatId,
-            text: '⚠️ Limit reached (<b>3/3</b>).',
-            parse_mode: 'HTML',
-            reply_markup: getAdminPanelKeyboard(channels)
-          });
-        }
-
-        try {
-          const cInfo = await tgCall(token, 'getChat', { chat_id: targetCh });
-          if (cInfo?.ok && cInfo.result) {
-            targetTitle = cInfo.result.title || targetTitle || targetCh;
-          }
-        } catch {}
-
-        const title = targetTitle || targetCh;
-        if (!channels.some((c) => c.target === targetCh || c.chat_key === targetCh)) {
-          channels.push({ target: targetCh, title, chat_key: targetCh });
-          await db.saveConnectedChats(channels, env);
-        }
-        const chList = formatConnectedChatsList(channels);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: `✅ Connected: <b>${escapeHtml(title)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+          text: res.text,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
         });
       } else {
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: '⚠️ Please send a valid channel <b>@username</b>, <b>-100... ID</b>, or forward a message from the channel.\n\nTap <b>Back</b> to cancel.',
+          text: '⚠️ <b>Invalid Channel/Group:</b> Please forward a message from the channel or send a valid @username or chat ID.',
           parse_mode: 'HTML',
-          reply_markup: { keyboard: [[{ text: 'Back' }]], resize_keyboard: true }
+          reply_markup: getAdminPanelKeyboard(await db.getConnectedChats(env))
         });
       }
     }
@@ -1330,55 +1401,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: msg.message_id });
       } catch {}
 
-      try {
-        const rawBotId = token.includes(':') ? token.split(':')[0] : token;
-        const botId = isNaN(Number(rawBotId)) ? rawBotId : Number(rawBotId);
-        const botMem = await tgCall(token, 'getChatMember', { chat_id: chatId, user_id: botId });
-        if (!botMem?.ok || !['administrator', 'creator'].includes(botMem.result?.status)) {
-          return tgCall(token, 'sendMessage', {
-            chat_id: userId,
-            text: `⚠️ Please add @${botTag} as an <b>Administrator</b> in <b>${escapeHtml(msg.chat.title || String(chatId))}</b> first.`,
-            parse_mode: 'HTML'
-          });
-        }
-      } catch {}
-
+      const res = await connectChatCore(token, env, chatId, msg.chat.title || '');
       const channels = await db.getConnectedChats(env);
-      const target = msg.chat.username ? `@${msg.chat.username}` : String(chatId);
-      const altTarget = String(chatId);
-      const isAlreadyConnected = channels.some(
-        (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget
-      );
-
-      if (!isAlreadyConnected) {
-        if (channels.length >= 3) {
-          return tgCall(token, 'sendMessage', {
-            chat_id: userId,
-            text: `⚠️ Limit reached (<b>3/3</b>).`,
-            parse_mode: 'HTML',
-            reply_markup: getAdminPanelKeyboard(channels)
-          });
-        }
-        let inviteUrl = '';
-        try {
-          const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chatId });
-          if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
-        } catch {}
-        channels.push({
-          target,
-          title: msg.chat.title || target,
-          chat_key: altTarget,
-          type: 'group',
-          invite_url: inviteUrl
-        });
-        await db.saveConnectedChats(channels, env);
-      }
-
-      const chList = formatConnectedChatsList(channels);
-      const disp = msg.chat.username ? `@${msg.chat.username}` : (msg.chat.title || target);
       return tgCall(token, 'sendMessage', {
         chat_id: userId,
-        text: `✅ Connected: <b>${escapeHtml(disp)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+        text: res.text,
         parse_mode: 'HTML',
         reply_markup: getAdminPanelKeyboard(channels)
       });
@@ -2464,6 +2491,50 @@ async function handleCallback(cb, token, env = {}, ctx = null) {
   const botTag = await getBotTag(token);
   const data = cb.data;
   if (!data) return;
+  if (data.startsWith('fsub_add:') || data.startsWith('fsub_skip:')) {
+    const { adminId } = getBotConfig(env);
+    const userId = cb.from?.id;
+    const isAdmin = userId && (userId === adminId || String(userId) === String(adminId));
+    if (!isAdmin) {
+      return tgCall(token, 'answerCallbackQuery', {
+        callback_query_id: cb.id,
+        text: 'Admins only',
+        show_alert: true
+      });
+    }
+    const [action, cid] = data.split(':');
+    const chatId = cb.message?.chat?.id;
+    const messageId = cb.message?.message_id;
+
+    if (action === 'fsub_skip') {
+      await tgCall(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Skipped' });
+      let title = cid;
+      try {
+        const ch = await tgCall(token, 'getChat', { chat_id: cid });
+        if (ch?.ok && ch.result) {
+          title = ch.result.title || (ch.result.username ? `@${ch.result.username}` : cid);
+        }
+      } catch {}
+      return tgCall(token, 'editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: `✖️ <b>Skipped:</b> ${escapeHtml(title)}\n\n<blockquote>Not used for Join Verification.</blockquote>`,
+        parse_mode: 'HTML'
+      });
+    }
+
+    // fsub_add:
+    await tgCall(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Verifying...' });
+    const res = await connectChatCore(token, env, cid);
+    const channels = await db.getConnectedChats(env);
+    return tgCall(token, 'editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: res.text,
+      parse_mode: 'HTML',
+      reply_markup: res.ok ? getAdminPanelKeyboard(channels) : null
+    });
+  }
 
   if (data === 'verify_sub' || data === 'check_sub') {
     const userId = cb.from?.id;

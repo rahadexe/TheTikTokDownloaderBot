@@ -961,6 +961,12 @@ async function runTests() {
           try { parsed = JSON.parse(opts.body); } catch {}
         }
         membershipCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        if (urlStr.includes('/getChatMember')) {
+          return new Response(JSON.stringify({ ok: true, result: { status: 'administrator', can_invite_users: true } }));
+        }
+        if (urlStr.includes('/getChat')) {
+          return new Response(JSON.stringify({ ok: true, result: { id: -1009988776655, title: 'Official TikTok Channel', username: 'TikTokOfficialCh', type: 'channel' } }));
+        }
         return new Response(JSON.stringify({ ok: true, result: {} }));
       }
       return prevFetch16(url, opts);
@@ -989,7 +995,7 @@ async function runTests() {
     const leaveCall = membershipCalls.find((c) => c.method === 'leaveChat' && c.payload?.chat_id === -1001122334455);
     if (!leaveCall) throw new Error('Bot did not auto-leave unauthorized channel');
 
-    // 16b. Authorized Admin adds bot to channel as Administrator -> Auto-connects!
+    // 16b. Authorized Admin adds bot to channel as Administrator -> Opt-in prompt, does NOT auto-connect!
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1006,9 +1012,35 @@ async function runTests() {
       }),
       { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
     );
+    const connBeforeOptIn = await db.getConnectedChats({});
+    if (connBeforeOptIn.some((c) => c.target === '@TikTokOfficialCh')) {
+      throw new Error('Bot should NOT auto-connect without admin confirmation!');
+    }
+    const promptCall = membershipCalls.find(
+      (c) => c.method === 'sendMessage' && c.payload?.chat_id === adminId && c.payload?.text?.includes('Use this chat for Join Verification?')
+    );
+    if (!promptCall) throw new Error('Opt-in verification prompt was not sent to admin');
+
+    // Admin clicks "Add to Join Verification"
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 260,
+          callback_query: {
+            id: 'cb_fsub_1',
+            from: { id: adminId, first_name: 'AdminRahad' },
+            message: { chat: { id: adminId }, message_id: 991 },
+            data: 'fsub_add:-1009988776655'
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token', ADMIN_ID: String(adminId) }
+    );
     const connectedList = await db.getConnectedChats({});
-    const isConn = connectedList.some((c) => c.target === '@TikTokOfficialCh');
-    if (!isConn) throw new Error('Admin auto-connect channel failed');
+    const isConn = connectedList.some((c) => c.target === '@TikTokOfficialCh' || c.chat_key === '-1009988776655');
+    if (!isConn) throw new Error('Admin opt-in connect channel failed');
 
     // 16c. Bot removed from connected chat -> Auto-disconnects & alerts admin!
     await worker.fetch(
