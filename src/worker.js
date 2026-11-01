@@ -2775,7 +2775,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     }
   }
 
-  // 2. Empty Query (@bot without link) -> In-chat Guide Card (Does NOT kick user out to bot)
+  // 2. Empty Query (@bot without link) -> Clean single-line prompt (No description clutter)
   if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
@@ -2783,12 +2783,9 @@ async function handleInlineQuery(iq, token, env = {}) {
         {
           type: 'article',
           id: 'guide',
-          title: '💡 How to Download',
-          description: 'Paste any TikTok video or photo link to share directly.',
+          title: '🔗 Send a TikTok link',
           input_message_content: {
-            message_text:
-              '💡 <b>How to Download</b>\n\n' +
-              `<blockquote>Paste any TikTok video or photo link after ${botTag} to share directly.</blockquote>`,
+            message_text: '🔗 <b>Send a TikTok link</b>',
             parse_mode: 'HTML'
           }
         }
@@ -2808,7 +2805,6 @@ async function handleInlineQuery(iq, token, env = {}) {
           type: 'article',
           id: 'ig_fb_cross_promo',
           title: '📸 Instagram/FB Not Supported',
-          description: 'Instagram and Facebook links are not supported here. Use @InstaFBDownloaderProBot.',
           input_message_content: {
             message_text:
               '📸 <b>Instagram & Facebook not supported here.</b>\n\n' +
@@ -2836,7 +2832,6 @@ async function handleInlineQuery(iq, token, env = {}) {
           type: 'article',
           id: 'youtube_unsupported',
           title: '▶️ YouTube Not Supported',
-          description: 'Only TikTok video and photo links are supported.',
           input_message_content: {
             message_text:
               '▶️ <b>YouTube not supported.</b>\n\n' +
@@ -2850,7 +2845,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     });
   }
 
-  // 3c. Extract and Validate TikTok Link
+  // 3c. Extract and Validate TikTok Link (or non-URL query like 'hi')
   const tiktokUrl = extractTikTokUrl(q);
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
@@ -2860,11 +2855,8 @@ async function handleInlineQuery(iq, token, env = {}) {
           type: 'article',
           id: 'unsupported',
           title: '🔗 Send a TikTok link',
-          description: 'Please paste a valid TikTok video or photo link.',
           input_message_content: {
-            message_text:
-              '🔗 <b>Send a TikTok link.</b>\n\n' +
-              '<blockquote>Please paste a valid TikTok video or photo link.</blockquote>',
+            message_text: '🔗 <b>Send a TikTok link</b>',
             parse_mode: 'HTML'
           }
         }
@@ -2919,7 +2911,6 @@ async function handleInlineQuery(iq, token, env = {}) {
           type: 'article',
           id: 'uncached',
           title: '⏳ Video Not Cached Yet',
-          description: `Send this link to ${botTag} once to cache it for instant inline sharing.`,
           input_message_content: {
             message_text:
               '⏳ <b>Video Not Cached Yet</b>\n\n' +
@@ -2944,7 +2935,6 @@ async function handleInlineQuery(iq, token, env = {}) {
           type: 'article',
           id: 'server_error',
           title: '⚠️ Server error, please try again.',
-          description: 'Server error, please try again.',
           input_message_content: {
             message_text: '⚠️ <b>Server error, please try again.</b>',
             parse_mode: 'HTML'
