@@ -1423,7 +1423,7 @@ async function runTests() {
     const forceSubCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_unverified_2');
     if (
       !forceSubCall ||
-      forceSubCall.payload?.switch_pm_text !== '🔒 Click to Join & Verify' ||
+      forceSubCall.payload?.switch_pm_text !== '🔒 Click to Join and Download Video' ||
       forceSubCall.payload?.results?.length !== 0
     ) {
       throw new Error('Unverified inline query did not return switch_pm_text and empty results');

@@ -2799,7 +2799,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     if (missing.length > 0) {
       return tgCall(token, 'answerInlineQuery', {
         inline_query_id: iq.id,
-        switch_pm_text: '🔒 Click to Join & Verify',
+        switch_pm_text: '🔒 Click to Join and Download Video',
         switch_pm_parameter: 'verify',
         results: [],
         cache_time: 1,
