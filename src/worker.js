@@ -1609,6 +1609,32 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
   }
 
+  // Admin Cache Busting Command
+  if (text.startsWith('/clearcache') && isAdminUser) {
+    const parts = text.split(/\s+/);
+    if (parts.length > 1) {
+      const targetUrl = parts[1].trim();
+      const parsedUrl = extractTikTokUrl(targetUrl);
+      let vid = parsedUrl ? (parsedUrl.match(/\/(?:video|photo|v|post)\/([0-9]+)/i)?.[1]) : null;
+      if (!vid && parsedUrl) {
+        vid = await resolveShortLinkIdFast(parsedUrl, 3000);
+      }
+      if (vid) {
+        await db.invalidateCachedMedia(vid, env);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `🗑️ <b>Cache cleared for:</b>\n<code>${vid}</code>\n\nSend the link now to download fresh.`,
+          parse_mode: 'HTML'
+        });
+      }
+    }
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '💡 <b>Usage:</b> <code>/clearcache &lt;TikTok link&gt;</code>',
+      parse_mode: 'HTML'
+    });
+  }
+
   // Smart URL Classifier & Cross-Platform Routing
   const IG_FB_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|instagr\.am|facebook\.com|fb\.watch|fb\.gg|fb\.com)\/[^\s]+/i;
   const YT_REGEX = /(?:https?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:youtube\.com|youtu\.be)\/[^\s]+/i;
