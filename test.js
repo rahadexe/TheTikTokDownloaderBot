@@ -1362,7 +1362,7 @@ async function runTests() {
 
     const inlineUserId = 77112233;
 
-    // 20a. Empty inline query (@TheTikTokDownloaderBot ) -> returns guide card
+    // 20a. Empty inline query (@TheTikTokDownloaderBot ) -> returns clean '💡 Enter a video link...' top blue bar
     db.setUserVerifiedMemory(inlineUserId);
     await worker.fetch(
       new Request('https://worker.test/webhook', {
@@ -1381,11 +1381,11 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const guideCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_guide_1');
-    if (!guideCall || guideCall.payload?.results?.[0]?.id !== 'guide') {
-      throw new Error('Empty inline query did not return guide card');
+    if (!guideCall || guideCall.payload?.switch_pm_text !== '💡 Enter a video link...' || guideCall.payload?.results?.length !== 0) {
+      throw new Error('Empty inline query did not return "💡 Enter a video link..." top blue bar');
     }
 
-    // 20b. Unverified user inline query -> returns switch_pm_text '🔒 Verification Required' & force_sub article
+    // 20b. Unverified user inline query -> returns clean '🔒 Click to Join Channels & Verify' lock bar
     db.clearVerifiedUsersMemory();
     // Configure a connected channel so user is missing
     await db.saveConnectedChats([{ target: '@TestRequiredChan', chat_key: 'req_1' }], {});
@@ -1430,8 +1430,17 @@ async function runTests() {
       throw new Error('Unverified inline query did not return switch_pm_text and empty results');
     }
 
-    // 20c. Unsupported / invalid link query -> returns '⚠️ Unsupported link format.' card
+    // 20c. Unsupported / invalid link query -> returns clean '⚠️ Unsupported link format.' top blue bar
+    await db.saveConnectedChats([], {});
     db.setUserVerifiedMemory(inlineUserId);
+    const prevFetch20c = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/getChatMember')) {
+        return new Response(JSON.stringify({ ok: true, result: { status: 'member', is_member: true } }));
+      }
+      return prevFetch20c(url, opts);
+    };
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1449,8 +1458,8 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const invalidCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_invalid_3');
-    if (!invalidCall || invalidCall.payload?.results?.[0]?.title !== '⚠️ Unsupported link format.') {
-      throw new Error('Invalid inline link did not return "⚠️ Unsupported link format." card');
+    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '⚠️ Unsupported link format.' || invalidCall.payload?.results?.length !== 0) {
+      throw new Error('Invalid inline link did not return "⚠️ Unsupported link format." blue bar');
     }
 
     // 20d. Cached video query -> returns video result with video_file_id and blockquote caption
@@ -1482,7 +1491,7 @@ async function runTests() {
       throw new Error('Cached inline query did not return InlineQueryResultVideo with blockquote caption');
     }
 
-    // 20e. Uncached video query -> returns '⏳ Processing Video...' card with deep link button
+    // 20e. Uncached video query -> returns clean '⏳ Fetching video... Please re-type in 2s.' blue bar (or direct video)
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1500,13 +1509,8 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const uncachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_uncached_5');
-    const uncachedResult = uncachedCall?.payload?.results?.[0];
-    if (
-      !uncachedResult ||
-      uncachedResult.id !== 'processing' ||
-      uncachedResult.title !== '⏳ Processing Video...'
-    ) {
-      throw new Error('Uncached inline query did not return "⏳ Processing Video..." card');
+    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '⏳ Fetching video... Please re-type in 2s.') {
+      throw new Error('Uncached inline query did not return "⏳ Fetching video... Please re-type in 2s." blue bar');
     }
 
     globalThis.fetch = prevFetch20;

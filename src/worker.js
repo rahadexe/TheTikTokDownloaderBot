@@ -1483,7 +1483,21 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           parse_mode: 'HTML',
           reply_markup: markup
         });
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '✅ <b>Verification Successful!</b>\n\n<blockquote>You have joined all connected channels. You can now download videos!</blockquote>',
+          parse_mode: 'HTML'
+        });
       }
+    }
+    if (payloadPart === 'guide') {
+      const botTag = await getBotTag(token);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '💡 <b>How to Download:</b>\n\n<blockquote>1. Copy any video or photo link from TikTok.\n2. Send the link here, or type ' + botTag + ' in any chat to share!</blockquote>',
+        parse_mode: 'HTML'
+      });
     }
     const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
     if (!deepTikTokUrl) {
@@ -2746,65 +2760,42 @@ async function handleInlineQuery(iq, token, env = {}) {
   const botTag = await getBotTag(token);
   const botName = botTag.replace('@', '');
 
-  // 1. Force-Subscribe Verification Gate for Inline Queries
+  // 1. Force-Subscribe Verification Gate for Inline Queries (Always checks live with Telegram to catch leave)
   if (userId && userId !== adminId) {
-    const isVerified = db.isUserVerifiedMemory(userId);
-    if (!isVerified) {
-      const missing = await getUnjoinedChannels(token, userId, null, null, env);
-      if (missing.length > 0) {
-        return tgCall(token, 'answerInlineQuery', {
-          inline_query_id: iq.id,
-          switch_pm_text: '🔒 Click to Join Channels & Verify',
-          switch_pm_parameter: 'verify',
-          results: [],
-          cache_time: 1,
-          is_personal: true
-        });
-      }
+    const missing = await getUnjoinedChannels(token, userId, null, null, env);
+    if (missing.length > 0) {
+      return tgCall(token, 'answerInlineQuery', {
+        inline_query_id: iq.id,
+        switch_pm_text: '🔒 Click to Join Channels & Verify',
+        switch_pm_parameter: 'verify',
+        results: [],
+        cache_time: 1,
+        is_personal: true
+      });
     }
   }
 
-  // 2. Empty Query Guide Card (@bot without link)
+  // 2. Empty Query (@bot without link) -> Clean blue bar prompt
   if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'guide',
-          title: '💡 How to Download',
-          description: 'Paste any TikTok link to share video directly.',
-          input_message_content: {
-            message_text:
-              '💡 <b>How to Download</b>\n\n' +
-              `<blockquote>Paste any TikTok link after @${botName} to share video directly.</blockquote>`,
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 300,
-      is_personal: false
+      switch_pm_text: '💡 Enter a video link...',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
+      is_personal: true
     });
   }
 
-  // 3. Extract and Validate TikTok Link
+  // 3. Extract and Validate TikTok Link -> Clean blue bar warning
   const tiktokUrl = extractTikTokUrl(q);
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'unsupported',
-          title: '⚠️ Unsupported link format.',
-          description: 'Unsupported link format.',
-          input_message_content: {
-            message_text: '⚠️ <b>Unsupported link format.</b>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 10,
+      switch_pm_text: '⚠️ Unsupported link format.',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
@@ -2846,58 +2837,63 @@ async function handleInlineQuery(iq, token, env = {}) {
       }
     }
 
-    // 5. Uncached Link: Display processing card with deep link to process in Bot
+    // 5. Uncached Link: Attempt fast direct video stream extraction
+    try {
+      const data = await extractTikTokData(tiktokUrl);
+      if (data && !data.isPhoto && (data.videoUrl || data.tikwmProxyUrl)) {
+        const streamUrl = data.videoUrl || data.tikwmProxyUrl;
+        const safeTitle = formatCaptionTitle(data.title, data.author, 80) || 'TikTok Video';
+        const { html: htmlCaption } = buildMediaCaption(data.title, data.author, botTag);
+        return tgCall(token, 'answerInlineQuery', {
+          inline_query_id: iq.id,
+          results: [
+            {
+              type: 'video',
+              id: String(data.id || Date.now()),
+              video_url: streamUrl,
+              mime_type: 'video/mp4',
+              thumbnail_url: data.thumbnail || 'https://placehold.co/320x320/png?text=TikTok+Video',
+              title: safeTitle,
+              caption: htmlCaption,
+              parse_mode: 'HTML'
+            }
+          ],
+          cache_time: 300,
+          is_personal: false
+        });
+      } else if (data?.isPhoto) {
+        return tgCall(token, 'answerInlineQuery', {
+          inline_query_id: iq.id,
+          switch_pm_text: '🖼️ Photo/Carousel detected. Send in bot chat.',
+          switch_pm_parameter: 'guide',
+          results: [],
+          cache_time: 1,
+          is_personal: true
+        });
+      }
+    } catch (extErr) {}
+
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'processing',
-          title: '⏳ Processing Video...',
-          description: 'Click to download this video in bot',
-          input_message_content: {
-            message_text:
-              '⏳ <b>Processing Video...</b>\n\n' +
-              '<blockquote>Click below to download this video in the bot:</blockquote>',
-            parse_mode: 'HTML'
-          },
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📥 Download in Bot', url: `https://t.me/${botName}?start=${encodeURIComponent(tiktokUrl)}` }]
-            ]
-          }
-        }
-      ],
-      cache_time: 5,
+      switch_pm_text: '⏳ Fetching video... Please re-type in 2s.',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   } catch (err) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'server_error',
-          title: '⚠️ Server error, please try again.',
-          description: 'Server error, please try again.',
-          input_message_content: {
-            message_text: '⚠️ <b>Server error, please try again.</b>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 5,
+      switch_pm_text: '⚠️ Server error, please try again.',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
 }
 
-/**
- * Triple-Engine TikTok Extractor:
- * 1. TikWM API (with automatic 1.15s retry when shared Cloudflare IP hits 1-req/sec rate limit + photo carousel support)
- * 2. Direct First-Party TikTok Web Rehydration Scraper (__UNIVERSAL_DATA_FOR_REHYDRATION__ + ttwid cookie, zero rate limits)
- * 3. TikMate API (with proper hd_token, caption preservation, and Worker multipart flag)
- */
+
 async function extractTikTokData(url) {
   const tikwm = await extractFromTikWM(url);
   if (tikwm) return tikwm;
