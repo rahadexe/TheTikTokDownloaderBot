@@ -611,6 +611,7 @@ function extractInputTextWithEntities(msg) {
 const adminViewState = new Map(); // userId -> 'MAIN' | 'PANEL' | 'SUBMENU'
 const adminBroadcastState = new Map(); // userId -> { stage, chat_id, message_id, preview_msg_id, auto_delete_mins }
 const adminWaitingAddChat = new Map(); // userId -> boolean
+const inlinePendingDownloads = new Map(); // token -> url
 
 export function getMainAdminKeyboard() {
   return {
@@ -1498,6 +1499,38 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         text: '💡 <b>How to Download:</b>\n\n<blockquote>1. Copy any video or photo link from TikTok.\n2. Send the link here, or type ' + botTag + ' in any chat to share!</blockquote>',
         parse_mode: 'HTML'
       });
+    }
+    if (payloadPart === 'igfb') {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '📸 <b>Instagram & Facebook Downloader</b>\n\n<blockquote>Please use @InstaFBDownloaderProBot to download Instagram and Facebook videos!</blockquote>',
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📸 Open Instagram & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]
+          ]
+        }
+      });
+    }
+    if (payloadPart === 'yt') {
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '▶️ <b>YouTube Not Supported</b>\n\n<blockquote>This bot only downloads TikTok videos and photos. YouTube is not supported.</blockquote>',
+        parse_mode: 'HTML'
+      });
+    }
+    if (payloadPart.startsWith('dl_')) {
+      const pendingUrl = inlinePendingDownloads.get(payloadPart);
+      inlinePendingDownloads.delete(payloadPart);
+      if (pendingUrl) {
+        text = pendingUrl;
+      } else {
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '💡 <b>Download in Bot:</b>\n\n<blockquote>Please send or paste your TikTok link here to download.</blockquote>',
+          parse_mode: 'HTML'
+        });
+      }
     }
     const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
     if (!deepTikTokUrl) {
@@ -2775,50 +2808,27 @@ async function handleInlineQuery(iq, token, env = {}) {
     }
   }
 
-  // 2. Empty Query (@bot without link) -> Clean single-line prompt (No description clutter)
+  // 2. Empty Query (@bot without link) -> Clean floating blue bar hint (ZERO cards)
   if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'guide',
-          title: '🔗 Send a TikTok link',
-          input_message_content: {
-            message_text: '🔗 <b>Send a TikTok link</b>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 10,
+      switch_pm_text: '💡 Paste a TikTok video or photo link...',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
 
   // 3. Smart Platform Classifier for Non-TikTok links
-  // 3a. Instagram or Facebook Link Detected -> Cross-promotion to IG/FB bot
+  // 3a. Instagram or Facebook Link Detected -> Direct switch to IG/FB bot via PM
   if (/(?:instagram\.com|facebook\.com|fb\.watch)/i.test(q)) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'ig_fb_cross_promo',
-          title: '📸 Instagram/FB Not Supported',
-          input_message_content: {
-            message_text:
-              '📸 <b>Instagram & Facebook not supported here.</b>\n\n' +
-              '<blockquote>Please use @InstaFBDownloaderProBot to download Instagram and Facebook videos.</blockquote>',
-            parse_mode: 'HTML'
-          },
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📸 Open Instagram & FB Downloader', url: 'https://t.me/InstaFBDownloaderProBot' }]
-            ]
-          }
-        }
-      ],
-      cache_time: 10,
+      switch_pm_text: '📸 IG/FB link! Click to open IG/FB Bot',
+      switch_pm_parameter: 'igfb',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
@@ -2827,20 +2837,10 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (/(?:youtube\.com|youtu\.be)/i.test(q)) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'youtube_unsupported',
-          title: '▶️ YouTube Not Supported',
-          input_message_content: {
-            message_text:
-              '▶️ <b>YouTube not supported.</b>\n\n' +
-              '<blockquote>Only TikTok video and photo links are supported.</blockquote>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 10,
+      switch_pm_text: '▶️ YouTube not supported. Only TikTok',
+      switch_pm_parameter: 'yt',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
@@ -2850,18 +2850,10 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'unsupported',
-          title: '🔗 Send a TikTok link',
-          input_message_content: {
-            message_text: '🔗 <b>Send a TikTok link</b>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 10,
+      switch_pm_text: '🔗 Send a TikTok video link',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
@@ -2903,50 +2895,28 @@ async function handleInlineQuery(iq, token, env = {}) {
       }
     }
 
-    // 5. Uncached Link: Display clear 'Video Not Cached Yet' card with 1-click Download in Bot button
+    // 5. Uncached Link: Zero ugly cards! Sleek 1-click blue bar to Download in Bot
+    const tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
+    inlinePendingDownloads.set(tokenKey, tiktokUrl);
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'uncached',
-          title: '⏳ Video Not Cached Yet',
-          input_message_content: {
-            message_text:
-              '⏳ <b>Video Not Cached Yet</b>\n\n' +
-              '<blockquote>Click below to download this video in the bot and cache it:</blockquote>',
-            parse_mode: 'HTML'
-          },
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📥 Download in Bot', url: `https://t.me/${botName}` }]
-            ]
-          }
-        }
-      ],
-      cache_time: 5,
+      switch_pm_text: '📥 Click to Download in Bot',
+      switch_pm_parameter: tokenKey,
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   } catch (err) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results: [
-        {
-          type: 'article',
-          id: 'server_error',
-          title: '⚠️ Server error, please try again.',
-          input_message_content: {
-            message_text: '⚠️ <b>Server error, please try again.</b>',
-            parse_mode: 'HTML'
-          }
-        }
-      ],
-      cache_time: 5,
+      switch_pm_text: '⚠️ Server error, please try again.',
+      switch_pm_parameter: 'guide',
+      results: [],
+      cache_time: 1,
       is_personal: true
     });
   }
 }
-
 
 async function extractTikTokData(url) {
   const tikwm = await extractFromTikWM(url);

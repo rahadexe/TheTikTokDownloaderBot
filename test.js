@@ -1362,7 +1362,7 @@ async function runTests() {
 
     const inlineUserId = 77112233;
 
-    // 20a. Empty inline query (@TheTikTokDownloaderBot ) -> returns in-chat Guide Card
+    // 20a. Empty inline query (@TheTikTokDownloaderBot ) -> returns clean floating blue bar hint
     db.setUserVerifiedMemory(inlineUserId);
     await worker.fetch(
       new Request('https://worker.test/webhook', {
@@ -1381,8 +1381,8 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const guideCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_guide_1');
-    if (!guideCall || guideCall.payload?.results?.[0]?.id !== 'guide') {
-      throw new Error('Empty inline query did not return in-chat guide card');
+    if (!guideCall || guideCall.payload?.switch_pm_text !== '💡 Paste a TikTok video or photo link...' || guideCall.payload?.results?.length !== 0) {
+      throw new Error('Empty inline query did not return clean blue bar hint');
     }
 
     // 20b. Unverified user inline query -> returns clean '🔒 Click to Join Channels & Verify' lock bar
@@ -1429,7 +1429,7 @@ async function runTests() {
       throw new Error('Unverified inline query did not return switch_pm_text and empty results');
     }
 
-    // 20c. Cross-platform Instagram / Facebook link -> returns IG/FB cross-promo card
+    // 20c. Cross-platform Instagram / Facebook link -> returns clean IG/FB blue bar
     await db.saveConnectedChats([], {});
     db.setUserVerifiedMemory(inlineUserId);
     const prevFetch20c = globalThis.fetch;
@@ -1457,11 +1457,11 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const inlineIgCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_ig_cross_3');
-    if (!inlineIgCall || inlineIgCall.payload?.results?.[0]?.id !== 'ig_fb_cross_promo') {
-      throw new Error('Instagram link in TikTok inline query did not return cross-promo card');
+    if (!inlineIgCall || inlineIgCall.payload?.switch_pm_text !== '📸 IG/FB link! Click to open IG/FB Bot' || inlineIgCall.payload?.results?.length !== 0) {
+      throw new Error('Instagram link in TikTok inline query did not return blue bar');
     }
 
-    // 20d. Unsupported YouTube link query -> returns YouTube unsupported card
+    // 20d. Unsupported YouTube link query -> returns YouTube unsupported blue bar
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1479,11 +1479,11 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const inlineYtCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_yt_unsupported_4');
-    if (!inlineYtCall || inlineYtCall.payload?.results?.[0]?.id !== 'youtube_unsupported') {
-      throw new Error('YouTube link in TikTok inline query did not return youtube unsupported card');
+    if (!inlineYtCall || inlineYtCall.payload?.switch_pm_text !== '▶️ YouTube not supported. Only TikTok' || inlineYtCall.payload?.results?.length !== 0) {
+      throw new Error('YouTube link in TikTok inline query did not return blue bar');
     }
 
-    // 20e. Invalid non-link query -> returns send a TikTok link card
+    // 20e. Invalid non-link query -> returns send a TikTok link blue bar
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1501,8 +1501,8 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const invalidCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_invalid_5');
-    if (!invalidCall || invalidCall.payload?.results?.[0]?.id !== 'unsupported') {
-      throw new Error('Invalid query in TikTok inline query did not return unsupported card');
+    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '🔗 Send a TikTok video link' || invalidCall.payload?.results?.length !== 0) {
+      throw new Error('Invalid query in TikTok inline query did not return blue bar');
     }
 
     // 20f. Cached video query -> returns video result with video_file_id and blockquote caption
@@ -1534,7 +1534,7 @@ async function runTests() {
       throw new Error('Cached inline query did not return InlineQueryResultVideo with blockquote caption');
     }
 
-    // 20g. Uncached video query -> returns clean '⏳ Video Not Cached Yet' card with Download in Bot button
+    // 20g. Uncached video query -> returns clean '📥 Click to Download in Bot' blue bar
     await worker.fetch(
       new Request('https://worker.test/webhook', {
         method: 'POST',
@@ -1552,10 +1552,9 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const uncachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_uncached_7');
-    if (!uncachedCall || uncachedCall.payload?.results?.[0]?.id !== 'uncached') {
-      throw new Error('Uncached inline query did not return "uncached" card with Download in Bot button');
+    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '📥 Click to Download in Bot' || uncachedCall.payload?.results?.length !== 0) {
+      throw new Error('Uncached inline query did not return "📥 Click to Download in Bot" blue bar');
     }
-
     globalThis.fetch = prevFetch20;
     console.log('20. Comprehensive Inline Mode Suite (Force-Sub, Guide, Invalid, Cached & Processing Cards): PASSED');
 
