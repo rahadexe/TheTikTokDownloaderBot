@@ -1522,9 +1522,25 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     if (payloadPart.startsWith('dl_')) {
       let pendingUrl = inlinePendingDownloads.get(payloadPart);
       if (!pendingUrl) {
-        const m = payloadPart.match(/^dl_(\d+)$/);
-        if (m) {
-          pendingUrl = `https://www.tiktok.com/@video/video/${m[1]}`;
+        const mVid = payloadPart.match(/^dl_(\d+)$/);
+        const mVm = payloadPart.match(/^dl_vm_([a-zA-Z0-9_-]+)$/);
+        const mVt = payloadPart.match(/^dl_vt_([a-zA-Z0-9_-]+)$/);
+        const mT = payloadPart.match(/^dl_t_([a-zA-Z0-9_-]+)$/);
+        const mU = payloadPart.match(/^dl_u_([a-zA-Z0-9_-]+)$/);
+        if (mVid) {
+          pendingUrl = `https://www.tiktok.com/@video/video/${mVid[1]}`;
+        } else if (mVm) {
+          pendingUrl = `https://vm.tiktok.com/${mVm[1]}/`;
+        } else if (mVt) {
+          pendingUrl = `https://vt.tiktok.com/${mVt[1]}/`;
+        } else if (mT) {
+          pendingUrl = `https://www.tiktok.com/t/${mT[1]}/`;
+        } else if (mU) {
+          try {
+            const pad = mU[1].length % 4;
+            const b64 = mU[1].replace(/-/g, '+').replace(/_/g, '/') + ('='.repeat((4 - pad) % 4));
+            pendingUrl = atob(b64);
+          } catch (e) {}
         }
       }
       if (pendingUrl) {
@@ -2868,6 +2884,24 @@ async function handleInlineQuery(iq, token, env = {}) {
     let tokenKey = 'dl_' + Math.random().toString(36).slice(2, 14);
     if (cachedVidId && /^\d+$/.test(cachedVidId)) {
       tokenKey = `dl_${cachedVidId}`;
+    } else {
+      const vmMatch = tiktokUrl.match(/(?:vm|vt)\.tiktok\.com\/([a-zA-Z0-9_-]+)/i);
+      const tMatch = tiktokUrl.match(/tiktok\.com\/t\/([a-zA-Z0-9_-]+)/i);
+      const vidMatch = tiktokUrl.match(/\/(?:video|photo|v)\/([0-9]+)/i);
+      if (vidMatch) {
+        tokenKey = `dl_${vidMatch[1]}`;
+      } else if (vmMatch) {
+        tokenKey = `dl_vm_${vmMatch[1]}`;
+      } else if (tMatch) {
+        tokenKey = `dl_t_${tMatch[1]}`;
+      } else if (tiktokUrl.length <= 44) {
+        try {
+          const b64 = btoa(tiktokUrl).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          if (b64.length <= 59) {
+            tokenKey = `dl_u_${b64}`;
+          }
+        } catch (e) {}
+      }
     }
     inlinePendingDownloads.set(tokenKey, tiktokUrl);
     return tgCall(token, 'answerInlineQuery', {
