@@ -1338,7 +1338,181 @@ async function runTests() {
     globalThis.fetch = prevFetch19;
     console.log('19. Strictly Single Link & User Queue Feedback & Anti-Spam Flood Shield (10/min): PASSED');
 
-    console.log('\n🎉 ALL 19 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
+    // 20. Comprehensive Inline Mode Suite (Force-Sub, Guide, Invalid, Cached & Processing Cards)
+    const inlineCalls = [];
+    const prevFetch20 = globalThis.fetch;
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('api.telegram.org')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        inlineCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        if (urlStr.includes('/getChatMember')) {
+          return new Response(JSON.stringify({ ok: true, result: { status: 'member', is_member: true } }));
+        }
+        if (urlStr.includes('/answerInlineQuery')) {
+          return new Response(JSON.stringify({ ok: true, result: true }));
+        }
+        return new Response(JSON.stringify({ ok: true, result: {} }));
+      }
+      return prevFetch20(url, opts);
+    };
+
+    const inlineUserId = 77112233;
+
+    // 20a. Empty inline query (@TheTikTokDownloaderBot ) -> returns guide card
+    db.setUserVerifiedMemory(inlineUserId);
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 50,
+          inline_query: {
+            id: 'iq_guide_1',
+            from: { id: inlineUserId, first_name: 'InlineUser' },
+            query: '',
+            offset: ''
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    const guideCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_guide_1');
+    if (!guideCall || guideCall.payload?.results?.[0]?.id !== 'guide') {
+      throw new Error('Empty inline query did not return guide card');
+    }
+
+    // 20b. Unverified user inline query -> returns switch_pm_text '🔒 Verification Required' & force_sub article
+    db.clearVerifiedUsersMemory();
+    // Configure a connected channel so user is missing
+    await db.saveConnectedChats([{ target: '@TestRequiredChan', chat_key: 'req_1' }], {});
+    globalThis.fetch = async (url, opts = {}) => {
+      const urlStr = typeof url === 'string' ? url : url.url;
+      if (urlStr.includes('/getChatMember')) {
+        return new Response(JSON.stringify({ ok: true, result: { status: 'left', is_member: false } }));
+      }
+      if (urlStr.includes('/answerInlineQuery')) {
+        let parsed = null;
+        if (opts.body && typeof opts.body === 'string') {
+          try { parsed = JSON.parse(opts.body); } catch {}
+        }
+        inlineCalls.push({ url: urlStr, method: urlStr.split('/').pop(), payload: parsed });
+        return new Response(JSON.stringify({ ok: true, result: true }));
+      }
+      return prevFetch20(url, opts);
+    };
+
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 51,
+          inline_query: {
+            id: 'iq_unverified_2',
+            from: { id: 99887766, first_name: 'UnverifiedUser' },
+            query: 'https://www.tiktok.com/@user/video/7692664817294773512',
+            offset: ''
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    const forceSubCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_unverified_2');
+    if (
+      !forceSubCall ||
+      forceSubCall.payload?.switch_pm_text !== '🔒 Verification Required' ||
+      forceSubCall.payload?.results?.[0]?.id !== 'force_sub'
+    ) {
+      throw new Error('Unverified inline query did not return force sub switch_pm and force_sub card');
+    }
+
+    // 20c. Unsupported / invalid link query -> returns '⚠️ Unsupported link format.' card
+    db.setUserVerifiedMemory(inlineUserId);
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 52,
+          inline_query: {
+            id: 'iq_invalid_3',
+            from: { id: inlineUserId, first_name: 'InlineUser' },
+            query: 'https://example.com/not-tiktok',
+            offset: ''
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    const invalidCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_invalid_3');
+    if (!invalidCall || invalidCall.payload?.results?.[0]?.title !== '⚠️ Unsupported link format.') {
+      throw new Error('Invalid inline link did not return "⚠️ Unsupported link format." card');
+    }
+
+    // 20d. Cached video query -> returns video result with video_file_id and blockquote caption
+    await db.setCachedVideo('7692664817294773512', 'Test Cached Inline Video', 'BAACAgUAAxkBAA_INLINE_HASH_77', {});
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 53,
+          inline_query: {
+            id: 'iq_cached_4',
+            from: { id: inlineUserId, first_name: 'InlineUser' },
+            query: 'https://www.tiktok.com/@user/video/7692664817294773512',
+            offset: ''
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    const cachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_cached_4');
+    const cachedResult = cachedCall?.payload?.results?.[0];
+    if (
+      !cachedResult ||
+      cachedResult.type !== 'video' ||
+      cachedResult.video_file_id !== 'BAACAgUAAxkBAA_INLINE_HASH_77' ||
+      !cachedResult.caption?.includes('<blockquote><b>Test Cached Inline Video</b></blockquote>')
+    ) {
+      throw new Error('Cached inline query did not return InlineQueryResultVideo with blockquote caption');
+    }
+
+    // 20e. Uncached video query -> returns '⏳ Processing Video...' card with deep link button
+    await worker.fetch(
+      new Request('https://worker.test/webhook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          update_id: baseUid + 54,
+          inline_query: {
+            id: 'iq_uncached_5',
+            from: { id: inlineUserId, first_name: 'InlineUser' },
+            query: 'https://www.tiktok.com/@user/video/9999999999999999999',
+            offset: ''
+          }
+        })
+      }),
+      { BOT_TOKEN: 'mock_token' }
+    );
+    const uncachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_uncached_5');
+    const uncachedResult = uncachedCall?.payload?.results?.[0];
+    if (
+      !uncachedResult ||
+      uncachedResult.id !== 'processing' ||
+      uncachedResult.title !== '⏳ Processing Video...'
+    ) {
+      throw new Error('Uncached inline query did not return "⏳ Processing Video..." card');
+    }
+
+    globalThis.fetch = prevFetch20;
+    console.log('20. Comprehensive Inline Mode Suite (Force-Sub, Guide, Invalid, Cached & Processing Cards): PASSED');
+
+    console.log('\n🎉 ALL 20 ENTERPRISE TIKTOK BOT & TELEGRAM HASH CACHING TESTS PASSED 100%!\n');
 
 
   } finally {

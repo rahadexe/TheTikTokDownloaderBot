@@ -1473,6 +1473,18 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       await db.upsertUser({ id: userId, username: msg.from.username, firstName: msg.from.first_name }, env).catch(() => {});
     }
     const payloadPart = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
+    if (payloadPart === 'verify') {
+      const missing = await getUnjoinedChannels(token, userId, null, null, env);
+      if (missing.length > 0) {
+        const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: promptText,
+          parse_mode: 'HTML',
+          reply_markup: markup
+        });
+      }
+    }
     const deepTikTokUrl = payloadPart ? extractTikTokUrl(payloadPart) : null;
     if (!deepTikTokUrl) {
       const userName = msg.from?.first_name || 'there';
@@ -2727,14 +2739,94 @@ async function uploadAudioMultipart(token, chatId, audioBlob, cleanTitle, botTag
  * Uses cached Telegram file_id when available for 100% reliable delivery, else public tikwm proxy URL
  */
 async function handleInlineQuery(iq, token, env = {}) {
-  const q = (iq.query || '').trim();
+  const rawQ = iq.query || '';
+  const q = rawQ.trim();
+  const userId = iq.from?.id;
+  const { adminId } = getBotConfig(env);
+  const botTag = await getBotTag(token);
+  const botName = botTag.replace('@', '');
+
+  // 1. Force-Subscribe Verification Gate for Inline Queries
+  if (userId && userId !== adminId) {
+    const isVerified = db.isUserVerifiedMemory(userId);
+    if (!isVerified) {
+      const missing = await getUnjoinedChannels(token, userId, null, null, env);
+      if (missing.length > 0) {
+        return tgCall(token, 'answerInlineQuery', {
+          inline_query_id: iq.id,
+          switch_pm_text: '🔒 Verification Required',
+          switch_pm_parameter: 'verify',
+          results: [
+            {
+              type: 'article',
+              id: 'force_sub',
+              title: '🔒 Verification Required',
+              description: 'Please join our connected channels below to continue your download.',
+              input_message_content: {
+                message_text:
+                  '🔒 <b>Verification Required</b>\n\n' +
+                  '<blockquote>Please join our connected channels below to continue your download.</blockquote>',
+                parse_mode: 'HTML'
+              },
+              reply_markup: {
+                inline_keyboard: [[{ text: '🔒 Verify in Bot', url: `https://t.me/${botName}?start=verify` }]]
+              }
+            }
+          ],
+          cache_time: 1,
+          is_personal: true
+        });
+      }
+    }
+  }
+
+  // 2. Empty Query Guide Card (@bot without link)
+  if (!q) {
+    return tgCall(token, 'answerInlineQuery', {
+      inline_query_id: iq.id,
+      results: [
+        {
+          type: 'article',
+          id: 'guide',
+          title: '💡 How to Download',
+          description: 'Paste any TikTok link to share video directly.',
+          input_message_content: {
+            message_text:
+              '💡 <b>How to Download</b>\n\n' +
+              `<blockquote>Paste any TikTok link after @${botName} to share video directly.</blockquote>`,
+            parse_mode: 'HTML'
+          }
+        }
+      ],
+      cache_time: 300,
+      is_personal: false
+    });
+  }
+
+  // 3. Extract and Validate TikTok Link
   const tiktokUrl = extractTikTokUrl(q);
-  if (!tiktokUrl) return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
+  if (!tiktokUrl) {
+    return tgCall(token, 'answerInlineQuery', {
+      inline_query_id: iq.id,
+      results: [
+        {
+          type: 'article',
+          id: 'unsupported',
+          title: '⚠️ Unsupported link format.',
+          description: 'Unsupported link format.',
+          input_message_content: {
+            message_text: '⚠️ <b>Unsupported link format.</b>',
+            parse_mode: 'HTML'
+          }
+        }
+      ],
+      cache_time: 10,
+      is_personal: true
+    });
+  }
 
   try {
-    const botTag = await getBotTag(token);
-
-    // Check fast cache first (including 1-hop short-link redirect resolution)
+    // 4. Fast Cache Check (Single-hop redirect, mapping, or direct video ID)
     const directMatch = tiktokUrl.match(/\/(?:video|photo|v|embed\/v2|share\/video)\/([0-9]+)/);
     let cachedVidId = directMatch ? directMatch[1] : await db.getCachedShortLink(tiktokUrl, env);
     if (!cachedVidId) {
@@ -2743,10 +2835,12 @@ async function handleInlineQuery(iq, token, env = {}) {
         await db.setCachedShortLink(tiktokUrl, cachedVidId, env).catch(() => {});
       }
     }
+
     if (cachedVidId) {
       const cached = await db.getCachedVideo(cachedVidId, env);
       if (cached?.file_id) {
-        const safeTitle = safeUnicodeSlice(cached.title || 'TikTok Video', 200);
+        const safeTitle = formatCaptionTitle(cached.title, cached.author, 80) || 'TikTok Video';
+        const { html: htmlCaption } = buildMediaCaption(cached.title, cached.author, botTag);
         return tgCall(token, 'answerInlineQuery', {
           inline_query_id: iq.id,
           results: [
@@ -2755,53 +2849,62 @@ async function handleInlineQuery(iq, token, env = {}) {
               id: String(cachedVidId),
               video_file_id: cached.file_id,
               title: safeTitle,
-              caption: buildMediaCaption(safeTitle, '', botTag).html,
+              caption: htmlCaption,
               parse_mode: 'HTML',
               reply_markup: {
                 inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${cachedVidId}` }]]
               }
             }
           ],
-          cache_time: 300
+          cache_time: 300,
+          is_personal: false
         });
       }
     }
 
-    const data = await extractTikTokData(tiktokUrl);
-    if (!data || !data.videoUrl) {
-      return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
-    }
-
-    const safeTitle = safeUnicodeSlice(data.title || 'TikTok Video', 200);
-    // Prefer tikwmProxyUrl over cookie-bound direct URLs for Telegram inline video player
-    const publicInlineUrl = data.tikwmProxyUrl || (!data.requiresWorkerUpload ? data.videoUrl : null);
-    if (!publicInlineUrl) {
-      return tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
-    }
-
-    const results = [
-      {
-        type: 'video',
-        id: String(data.id || Date.now()),
-        video_url: publicInlineUrl,
-        mime_type: 'video/mp4',
-        thumb_url: data.thumbnail || 'https://raw.githubusercontent.com/TelegramBots/logos/main/logo.png',
-        title: safeTitle,
-        caption: buildMediaCaption(safeTitle, '', botTag).html,
-        parse_mode: 'HTML',
-        ...(data.id
-          ? { reply_markup: { inline_keyboard: [[{ text: '🎵 Download Audio', callback_data: `audio_${data.id}` }]] } }
-          : {})
-      }
-    ];
-
-    await tgCall(token, 'answerInlineQuery', {
+    // 5. Uncached Link: Display processing card with deep link to process in Bot
+    return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      results,
-      cache_time: 300
+      results: [
+        {
+          type: 'article',
+          id: 'processing',
+          title: '⏳ Processing Video...',
+          description: 'Click to download this video in bot',
+          input_message_content: {
+            message_text:
+              '⏳ <b>Processing Video...</b>\n\n' +
+              '<blockquote>Click below to download this video in the bot:</blockquote>',
+            parse_mode: 'HTML'
+          },
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📥 Download in Bot', url: `https://t.me/${botName}?start=${encodeURIComponent(tiktokUrl)}` }]
+            ]
+          }
+        }
+      ],
+      cache_time: 5,
+      is_personal: true
     });
-  } catch {
-    await tgCall(token, 'answerInlineQuery', { inline_query_id: iq.id, results: [] });
+  } catch (err) {
+    return tgCall(token, 'answerInlineQuery', {
+      inline_query_id: iq.id,
+      results: [
+        {
+          type: 'article',
+          id: 'server_error',
+          title: '⚠️ Server error, please try again.',
+          description: 'Server error, please try again.',
+          input_message_content: {
+            message_text: '⚠️ <b>Server error, please try again.</b>',
+            parse_mode: 'HTML'
+          }
+        }
+      ],
+      cache_time: 5,
+      is_personal: true
+    });
   }
 }
 
