@@ -2808,12 +2808,12 @@ async function handleInlineQuery(iq, token, env = {}) {
     }
   }
 
-  // 2. Extract and Validate TikTok Link (All non-TikTok inputs, empty, or errors show '🔗 Paste a TikTok link')
+  // 2. Extract and Validate TikTok Link (All non-TikTok inputs, empty, or errors show '🔗 Paste TikTok link...')
   const tiktokUrl = q ? extractTikTokUrl(q) : null;
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '🔗 Paste a TikTok link',
+      switch_pm_text: '🔗 Paste TikTok link...',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
@@ -2872,7 +2872,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   } catch (err) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '🔗 Paste a TikTok link',
+      switch_pm_text: '🔗 Paste TikTok link...',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
