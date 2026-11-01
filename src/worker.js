@@ -2754,25 +2754,9 @@ async function handleInlineQuery(iq, token, env = {}) {
       if (missing.length > 0) {
         return tgCall(token, 'answerInlineQuery', {
           inline_query_id: iq.id,
-          switch_pm_text: '🔒 Verification Required',
+          switch_pm_text: '🔒 Click to Join Channels & Verify',
           switch_pm_parameter: 'verify',
-          results: [
-            {
-              type: 'article',
-              id: 'force_sub',
-              title: '🔒 Verification Required',
-              description: 'Please join our connected channels below to continue your download.',
-              input_message_content: {
-                message_text:
-                  '🔒 <b>Verification Required</b>\n\n' +
-                  '<blockquote>Please join our connected channels below to continue your download.</blockquote>',
-                parse_mode: 'HTML'
-              },
-              reply_markup: {
-                inline_keyboard: [[{ text: '🔒 Verify in Bot', url: `https://t.me/${botName}?start=verify` }]]
-              }
-            }
-          ],
+          results: [],
           cache_time: 1,
           is_personal: true
         });

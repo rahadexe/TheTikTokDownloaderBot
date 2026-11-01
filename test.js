@@ -1424,10 +1424,10 @@ async function runTests() {
     const forceSubCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_unverified_2');
     if (
       !forceSubCall ||
-      forceSubCall.payload?.switch_pm_text !== '🔒 Verification Required' ||
-      forceSubCall.payload?.results?.[0]?.id !== 'force_sub'
+      forceSubCall.payload?.switch_pm_text !== '🔒 Click to Join Channels & Verify' ||
+      forceSubCall.payload?.results?.length !== 0
     ) {
-      throw new Error('Unverified inline query did not return force sub switch_pm and force_sub card');
+      throw new Error('Unverified inline query did not return switch_pm_text and empty results');
     }
 
     // 20c. Unsupported / invalid link query -> returns '⚠️ Unsupported link format.' card
