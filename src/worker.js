@@ -785,10 +785,10 @@ export function getAdminPanelKeyboard(channels = []) {
   const rows = [addRow];
   if (channels.length > 0) {
     rows.push([{ text: '🗑️ Disconnect' }, { text: '📣 Broadcast' }]);
-    rows.push([{ text: '📊 Activity' }, { text: '🗑️ Clear Cache Video' }]);
+    rows.push([{ text: '📊 Activity' }, { text: '🗑️ Clear Cache' }]);
     rows.push([{ text: 'Back' }]);
   } else {
-    rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache Video' }]);
+    rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache' }]);
     rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
   }
 
@@ -1142,7 +1142,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
         text:
-          `🗑️ <b>Clear Video Cache</b>\n\n` +
+          `🗑️ <b>Clear Cache Video</b>\n\n` +
           `<blockquote>Send the video link to clear its cached media.\n` +
           `You can send multiple links one by one.</blockquote>`,
         parse_mode: 'HTML',
@@ -1677,37 +1677,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         }
       }
     }
-  }
-
-  // Admin Cache Busting Command
-  if (text.startsWith('/clearcache') && isAdminUser) {
-    const parts = text.split(/\s+/);
-    if (parts.length > 1) {
-      const targetUrl = parts[1].trim();
-      const parsedUrl = extractTikTokUrl(targetUrl);
-      let vid = parsedUrl ? (parsedUrl.match(/\/(?:video|photo|v|post)\/([0-9]+)/i)?.[1]) : null;
-      if (!vid && parsedUrl) {
-        vid = await resolveShortLinkIdFast(parsedUrl, 3000);
-      }
-      if (vid) {
-        await db.invalidateCachedMedia(vid, env);
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text:
-            `🗑️ <b>Cache Reset Successfully</b>\n\n` +
-            `<blockquote><b>TikTok Post:</b> <code>${escapeHtml(vid)}</code>\n` +
-            `Cached media removed.</blockquote>`,
-          parse_mode: 'HTML'
-        });
-      }
-    }
-    return tgCall(token, 'sendMessage', {
-      chat_id: chatId,
-      text:
-        `💡 <b>Clear Video Cache</b>\n\n` +
-        `<blockquote>Send <code>/clearcache &lt;TikTok link&gt;</code> to reset cached media.</blockquote>`,
-      parse_mode: 'HTML'
-    });
   }
 
   // Smart URL Classifier & Cross-Platform Routing
