@@ -1381,7 +1381,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const guideCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_guide_1');
-    if (!guideCall || guideCall.payload?.switch_pm_text !== '💡 Paste a TikTok video or photo link...' || guideCall.payload?.results?.length !== 0) {
+    if (!guideCall || guideCall.payload?.switch_pm_text !== '💡 Paste a TikTok link' || guideCall.payload?.results?.length !== 0) {
       throw new Error('Empty inline query did not return clean blue bar hint');
     }
 
@@ -1423,7 +1423,7 @@ async function runTests() {
     const forceSubCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_unverified_2');
     if (
       !forceSubCall ||
-      forceSubCall.payload?.switch_pm_text !== '🔒 Click to Join Channels & Verify' ||
+      forceSubCall.payload?.switch_pm_text !== '🔒 Click to Join & Verify' ||
       forceSubCall.payload?.results?.length !== 0
     ) {
       throw new Error('Unverified inline query did not return switch_pm_text and empty results');
@@ -1457,7 +1457,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const inlineIgCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_ig_cross_3');
-    if (!inlineIgCall || inlineIgCall.payload?.switch_pm_text !== '📸 IG/FB link! Click to open IG/FB Bot' || inlineIgCall.payload?.results?.length !== 0) {
+    if (!inlineIgCall || inlineIgCall.payload?.switch_pm_text !== '📸 Open IG & FB Bot' || inlineIgCall.payload?.results?.length !== 0) {
       throw new Error('Instagram link in TikTok inline query did not return blue bar');
     }
 
@@ -1479,7 +1479,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const inlineYtCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_yt_unsupported_4');
-    if (!inlineYtCall || inlineYtCall.payload?.switch_pm_text !== '▶️ YouTube not supported. Only TikTok' || inlineYtCall.payload?.results?.length !== 0) {
+    if (!inlineYtCall || inlineYtCall.payload?.switch_pm_text !== '▶️ YouTube Not Supported' || inlineYtCall.payload?.results?.length !== 0) {
       throw new Error('YouTube link in TikTok inline query did not return blue bar');
     }
 
@@ -1501,7 +1501,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const invalidCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_invalid_5');
-    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '🔗 Send a TikTok video link' || invalidCall.payload?.results?.length !== 0) {
+    if (!invalidCall || invalidCall.payload?.switch_pm_text !== '🔗 Send a TikTok link' || invalidCall.payload?.results?.length !== 0) {
       throw new Error('Invalid query in TikTok inline query did not return blue bar');
     }
 
@@ -1552,7 +1552,7 @@ async function runTests() {
       { BOT_TOKEN: 'mock_token' }
     );
     const uncachedCall = inlineCalls.find((c) => c.payload?.inline_query_id === 'iq_uncached_7');
-    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '📥 Click to Download in Bot' || uncachedCall.payload?.results?.length !== 0) {
+    if (!uncachedCall || uncachedCall.payload?.switch_pm_text !== '📥 Download in Bot' || uncachedCall.payload?.results?.length !== 0) {
       throw new Error('Uncached inline query did not return "📥 Click to Download in Bot" blue bar');
     }
     globalThis.fetch = prevFetch20;

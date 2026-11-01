@@ -2799,7 +2799,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     if (missing.length > 0) {
       return tgCall(token, 'answerInlineQuery', {
         inline_query_id: iq.id,
-        switch_pm_text: '🔒 Click to Join Channels & Verify',
+        switch_pm_text: '🔒 Click to Join & Verify',
         switch_pm_parameter: 'verify',
         results: [],
         cache_time: 1,
@@ -2812,7 +2812,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (!q) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '💡 Paste a TikTok video or photo link...',
+      switch_pm_text: '💡 Paste a TikTok link',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
@@ -2825,7 +2825,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (/(?:instagram\.com|facebook\.com|fb\.watch)/i.test(q)) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '📸 IG/FB link! Click to open IG/FB Bot',
+      switch_pm_text: '📸 Open IG & FB Bot',
       switch_pm_parameter: 'igfb',
       results: [],
       cache_time: 1,
@@ -2837,7 +2837,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (/(?:youtube\.com|youtu\.be)/i.test(q)) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '▶️ YouTube not supported. Only TikTok',
+      switch_pm_text: '▶️ YouTube Not Supported',
       switch_pm_parameter: 'yt',
       results: [],
       cache_time: 1,
@@ -2850,7 +2850,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   if (!tiktokUrl) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '🔗 Send a TikTok video link',
+      switch_pm_text: '🔗 Send a TikTok link',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
@@ -2900,7 +2900,7 @@ async function handleInlineQuery(iq, token, env = {}) {
     inlinePendingDownloads.set(tokenKey, tiktokUrl);
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '📥 Click to Download in Bot',
+      switch_pm_text: '📥 Download in Bot',
       switch_pm_parameter: tokenKey,
       results: [],
       cache_time: 1,
@@ -2909,7 +2909,7 @@ async function handleInlineQuery(iq, token, env = {}) {
   } catch (err) {
     return tgCall(token, 'answerInlineQuery', {
       inline_query_id: iq.id,
-      switch_pm_text: '⚠️ Server error, please try again.',
+      switch_pm_text: '⚠️ Server error, try again',
       switch_pm_parameter: 'guide',
       results: [],
       cache_time: 1,
