@@ -291,6 +291,9 @@ export async function syncBotCommandsAndProfile(token, env = {}) {
 }
 
 export async function getUnjoinedChannels(token, userId, currentChatId = null, currentChatUsername = null, env = {}) {
+  const forceSubStatus = await db.getSetting('force_sub_status', env, 'on');
+  if (forceSubStatus === 'off') return [];
+
   const channels = await db.getConnectedChats(env);
   if (!channels || channels.length === 0) return [];
 
@@ -493,6 +496,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
     button_label: customLabel
   });
   await db.saveConnectedChats(channels, env);
+  await db.setSetting('force_sub_status', 'on', env);
 
   const labelInfo = customLabel ? ` [Button: <b>${escapeHtml(customLabel)}</b>]` : '';
   const chList = formatConnectedChatsList(channels);
@@ -863,6 +867,8 @@ async function showAdminDashboard(chatId, token, env) {
   adminViewState.set(Number(chatId), 'PANEL');
   const stats = await db.getStats(env);
   const channels = await db.getConnectedChats(env);
+  const forceSubStatus = await db.getSetting('force_sub_status', env, 'on');
+  const statusTag = forceSubStatus === 'off' ? '⏸️ Paused (Off)' : 'Active';
   const chList = formatConnectedChatsList(channels);
   const totalUsers = stats.users || 0;
   const activeUsers = stats.activeUsers || totalUsers;
@@ -880,9 +886,9 @@ async function showAdminDashboard(chatId, token, env) {
 
   let dashboardText;
   if (channels.length > 0) {
-    dashboardText = `${statsBlock}\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`;
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (${channels.length}/3) [${statusTag}]:</b>\n${chList}`;
   } else {
-    dashboardText = `${statsBlock}\n\n<b>Connected Chats (0/3)</b>`;
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (0/3) [${statusTag}]</b>`;
   }
 
   return tgCall(token, 'sendMessage', {
@@ -1455,16 +1461,33 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
-    if (cmdToken === '/channel' || cmdToken === '/channel_off') {
+    if (cmdToken === '/channel' || cmdToken === '/channel_off' || cmdToken === '/channel_on') {
       const parts = text.trim().split(/\s+/);
       const newChan = parts[1]?.trim();
       const customLabel = parts.slice(2).join(' ').trim();
       if (cmdToken === '/channel_off' || newChan?.toLowerCase() === 'off') {
-        await db.saveConnectedChats([], env);
+        await db.setSetting('force_sub_status', 'off', env);
+        const channels = await db.getConnectedChats(env);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Force-sub channel disabled.',
-          reply_markup: getAdminPanelKeyboard([])
+          text:
+            '⏸️ <b>Force-Sub Disabled (Paused)</b>\n\n' +
+            'Channels remain saved in your list, but users can now download directly without verification.\n\n' +
+            'To re-enable anytime, send:\n<code>/channel on</code>',
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
+      }
+      if (cmdToken === '/channel_on' || newChan?.toLowerCase() === 'on') {
+        await db.setSetting('force_sub_status', 'on', env);
+        const channels = await db.getConnectedChats(env);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            '▶️ <b>Force-Sub Re-enabled!</b>\n\n' +
+            'Join verification is now active for all connected channels.',
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
         });
       }
       if (!newChan) {
@@ -1475,7 +1498,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           text:
             `💡 <b>Usage:</b> <code>/channel @username [Button Label]</code>\n\n` +
             `Example:\n<code>/channel @RHToolsOfficial Join RH Tools</code>\n\n` +
-            `To disable force-sub:\n<code>/channel off</code>\n\n` +
+            `To pause force-sub:\n<code>/channel off</code>\n\n` +
+            `To resume force-sub:\n<code>/channel on</code>\n\n` +
             `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
