@@ -407,7 +407,10 @@ export function buildForceSubPrompt(missingChannels = []) {
     const isGroup = ch.type === 'group' || target.startsWith('-');
     const defaultLabel = isGroup ? '👥 Join Group' : '📢 Join Channel';
     const label = ch.button_label?.trim() || ch.buttonLabel?.trim() || defaultLabel;
-    const url = ch.invite_url || (target.startsWith('https://') ? target : `https://t.me/${target.replace(/^@/, '')}`);
+    let url = ch.invite_url || (target.startsWith('https://') ? target : (target.startsWith('@') ? `https://t.me/${target.replace(/^@/, '')}` : ''));
+    if (!url || !url.startsWith('https://t.me/')) {
+      url = target.startsWith('@') ? `https://t.me/${target.replace(/^@/, '')}` : 'https://t.me';
+    }
     return [{ text: label, url }];
   });
 
@@ -582,11 +585,11 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
   const altTarget = String(chat.id);
   const title = chat.title || target;
 
-  // 1. If bot was removed or kicked from a connected chat -> auto-disconnect & alert Admin
-  if (['left', 'kicked'].includes(newStatus)) {
+  // 1. If bot was removed, kicked, or demoted from Administrator in a connected chat -> auto-disconnect & alert Admin
+  if (['left', 'kicked'].includes(newStatus) || (oldStatus === 'administrator' && newStatus !== 'administrator')) {
     const channels = await db.getConnectedChats(env);
     const newChannels = channels.filter(
-      (c) => c.target !== target && c.chat_key !== altTarget && c.target !== altTarget
+      (c) => c.target !== target && c.chat_key !== altTarget && c.target !== altTarget && c.chat_key !== target
     );
     if (newChannels.length < channels.length) {
       await db.saveConnectedChats(newChannels, env);
@@ -594,29 +597,8 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
         token,
         adminId,
         target,
-        'Bot removed from chat',
+        oldStatus === 'administrator' && newStatus !== 'administrator' ? 'Bot admin permission removed' : 'Bot removed from chat',
         'Auto disconnected',
-        true,
-        title,
-        env
-      );
-    }
-    return;
-  }
-
-  // 1b. If bot was demoted from Administrator in an already-connected chat -> alert Admin
-  if (oldStatus === 'administrator' && newStatus !== 'administrator') {
-    const channels = await db.getConnectedChats(env);
-    const isConnected = channels.some(
-      (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget
-    );
-    if (isConnected) {
-      await notifyAdminChannelIssue(
-        token,
-        adminId,
-        target,
-        'Bot admin permission removed',
-        'Direct download allowed',
         true,
         title,
         env
