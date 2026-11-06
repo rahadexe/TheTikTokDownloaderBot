@@ -53,12 +53,8 @@ export async function enqueueUserJob(userId, jobFn) {
 const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
 const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
 
-export function checkUserRateLimit(userId, numLinks = 1, env = {}) {
+export function checkUserRateLimit(userId, numLinks = 1) {
   if (!userId) return { blocked: false, warning: null };
-  const { adminId } = getBotConfig(env);
-  if (adminId && (userId === adminId || String(userId) === String(adminId))) {
-    return { blocked: false, warning: null };
-  }
   const now = Date.now();
   const cooldownUntil = userSpamCooldown.get(userId) || 0;
   if (now < cooldownUntil) {
@@ -1680,14 +1676,15 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
 
     // Anti-Spam Flood Shield (budget checked for all links)
-    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length, env);
+    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length);
     if (rateLimitResult.blocked) {
       if (rateLimitResult.warning) {
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text: rateLimitResult.warning,
           parse_mode: 'HTML',
-          reply_to_message_id: msg.message_id
+          reply_to_message_id: msg.message_id,
+          allow_sending_without_reply: true
         });
       }
       return;
@@ -1932,14 +1929,15 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   }
 
   // Anti-Spam Flood Shield (budget checked for all links)
-  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length, env);
+  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length);
   if (rateLimitResult.blocked) {
     if (rateLimitResult.warning) {
       return tgCall(token, "sendMessage", {
         chat_id: chatId,
         text: rateLimitResult.warning,
         parse_mode: "HTML",
-        reply_to_message_id: msg.message_id
+        reply_to_message_id: msg.message_id,
+        allow_sending_without_reply: true
       });
     }
     return;
