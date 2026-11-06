@@ -36,7 +36,11 @@ export async function enqueueUserJob(userId, jobFn) {
 
   try {
     if (prevPromise) {
-      await prevPromise.catch(() => {});
+      // Await previous job with 60s safety timeout to prevent permanent blocking/deadlock
+      await Promise.race([
+        prevPromise.catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 60000))
+      ]);
     }
     return await jobFn();
   } finally {
@@ -49,8 +53,12 @@ export async function enqueueUserJob(userId, jobFn) {
 const RATE_LIMIT_WINDOW = 60000;     // 60 seconds
 const RATE_LIMIT_MAX_LINKS = 10;     // 10 links per minute
 
-export function checkUserRateLimit(userId, numLinks = 1) {
+export function checkUserRateLimit(userId, numLinks = 1, env = {}) {
   if (!userId) return { blocked: false, warning: null };
+  const { adminId } = getBotConfig(env);
+  if (adminId && (userId === adminId || String(userId) === String(adminId))) {
+    return { blocked: false, warning: null };
+  }
   const now = Date.now();
   const cooldownUntil = userSpamCooldown.get(userId) || 0;
   if (now < cooldownUntil) {
@@ -391,6 +399,25 @@ export async function getUnjoinedChannels(token, userId, currentChatId = null, c
               ch.title,
               env
             );
+            if (
+              errDesc.includes('chat not found') ||
+              errDesc.includes('kicked') ||
+              errDesc.includes('bot was kicked') ||
+              errDesc.includes('chat_id_invalid') ||
+              errDesc.includes('peer_id_invalid')
+            ) {
+              try {
+                const allChans = await db.getConnectedChats(env);
+                const remaining = allChans.filter(
+                  (c) =>
+                    c.target.toLowerCase() !== chTarget.toLowerCase() &&
+                    String(c.chat_key) !== String(chTarget)
+                );
+                if (remaining.length < allChans.length) {
+                  await db.saveConnectedChats(remaining, env);
+                }
+              } catch {}
+            }
           }
         }
       } catch (e) {}
@@ -526,7 +553,11 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   const altTarget = String(chatObj.id || cleanTarget);
 
   const isAlready = channels.some(
-    (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget || (c.chat_key && c.chat_key === target)
+    (c) =>
+      (c.target && target && c.target.toLowerCase() === target.toLowerCase()) ||
+      (c.chat_key && altTarget && String(c.chat_key) === altTarget) ||
+      (c.target && altTarget && c.target.toLowerCase() === altTarget.toLowerCase()) ||
+      (c.chat_key && target && String(c.chat_key).toLowerCase() === target.toLowerCase())
   );
   if (isAlready) {
     const kind = ['group', 'supergroup'].includes(chatObj.type) ? 'Group' : 'Channel';
@@ -588,21 +619,30 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
   // 1. If bot was removed, kicked, or demoted from Administrator in a connected chat -> auto-disconnect & alert Admin
   if (['left', 'kicked'].includes(newStatus) || (oldStatus === 'administrator' && newStatus !== 'administrator')) {
     const channels = await db.getConnectedChats(env);
-    const newChannels = channels.filter(
-      (c) => c.target !== target && c.chat_key !== altTarget && c.target !== altTarget && c.chat_key !== target
+    const removedChat = channels.find(
+      (c) =>
+        (c.target && target && c.target.toLowerCase() === target.toLowerCase()) ||
+        (c.chat_key && altTarget && String(c.chat_key) === altTarget) ||
+        (c.target && altTarget && c.target.toLowerCase() === altTarget.toLowerCase()) ||
+        (c.chat_key && target && String(c.chat_key).toLowerCase() === target.toLowerCase())
     );
-    if (newChannels.length < channels.length) {
+
+    const newChannels = channels.filter((c) => c !== removedChat);
+    if (removedChat || newChannels.length < channels.length) {
       await db.saveConnectedChats(newChannels, env);
-      await notifyAdminChannelIssue(
-        token,
-        adminId,
-        target,
-        oldStatus === 'administrator' && newStatus !== 'administrator' ? 'Bot admin permission removed' : 'Bot removed from chat',
-        'Auto disconnected',
-        true,
-        title,
-        env
-      );
+      const dispTitle = removedChat?.title || title;
+      const dispTarget = removedChat?.target || target;
+      await tgCall(token, 'sendMessage', {
+        chat_id: adminId,
+        text: `🗑️ <b>Chat Disconnected:</b> <b>${escapeHtml(dispTitle)}</b> (${escapeHtml(dispTarget)})`,
+        parse_mode: 'HTML'
+      });
+    } else if (isAdmin) {
+      await tgCall(token, 'sendMessage', {
+        chat_id: adminId,
+        text: `🗑️ <b>Chat Disconnected:</b> <b>${escapeHtml(title)}</b> (${escapeHtml(target)})`,
+        parse_mode: 'HTML'
+      });
     }
     return;
   }
@@ -620,44 +660,44 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
   }
 
   // 3. Authorized Admin added the bot as Administrator:
-  // ONLY notify the admin with an opt-in button. NEVER auto-enable Join Verification!
+  // Auto-connect chat (matching PhotoMetadataCleanerBot behavior)
   if (['channel', 'group', 'supergroup'].includes(chat.type) && newStatus === 'administrator' && oldStatus !== 'administrator') {
     if (user?.id) adminViewState.set(user.id, 'PANEL');
     const channels = await db.getConnectedChats(env);
     const isAlreadyConnected = channels.some(
-      (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget
+      (c) =>
+        (c.target && target && c.target.toLowerCase() === target.toLowerCase()) ||
+        (c.chat_key && altTarget && String(c.chat_key) === altTarget) ||
+        (c.target && altTarget && c.target.toLowerCase() === altTarget.toLowerCase()) ||
+        (c.chat_key && target && String(c.chat_key).toLowerCase() === target.toLowerCase())
     );
     if (isAlreadyConnected) return;
 
-    const kind = ['group', 'supergroup'].includes(chat.type) ? 'Group' : 'Channel';
-    const disp = chat.username ? `@${chat.username}` : (chat.title || target);
-    const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chat.id);
-
-    let text;
-    let reply_markup = null;
-
     if (channels.length >= 3) {
-      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Join Verification limit reached (3/3). Not added.</blockquote>`;
-    } else if (!rightsOk) {
-      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Not added to Join Verification.\nReason: ${escapeHtml(rightsReason)}</blockquote>`;
-    } else {
-      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Use this chat for Join Verification?</blockquote>`;
-      reply_markup = {
-        inline_keyboard: [
-          [{ text: '✅ Add to Join Verification', callback_data: `fsub_add:${chat.id}` }],
-          [{ text: '✖️ Skip', callback_data: `fsub_skip:${chat.id}` }]
-        ]
-      };
+      await tgCall(token, 'sendMessage', {
+        chat_id: adminId,
+        text: `🔔 <b>Bot added to ${chat.type === 'channel' ? 'Channel' : 'Group'}:</b> <b>${escapeHtml(title)}</b>\n\n<blockquote>Join Verification limit reached (3/3). Not added.</blockquote>`,
+        parse_mode: 'HTML'
+      });
+      return;
     }
 
-    if (user?.id) {
+    const res = await connectChatCore(token, env, target, title);
+    const updatedChannels = await db.getConnectedChats(env);
+    if (res.ok) {
       await tgCall(token, 'sendMessage', {
-        chat_id: user.id,
-        text,
-        parse_mode: 'HTML',
-        reply_markup
+        chat_id: adminId,
+        text: `✅ <b>Connected:</b> <b>${escapeHtml(title)}</b> (${escapeHtml(target)})\n\n<b>Connected Chats (${updatedChannels.length}/3):</b>\n${formatConnectedChatsList(updatedChannels)}`,
+        parse_mode: 'HTML'
+      });
+    } else {
+      await tgCall(token, 'sendMessage', {
+        chat_id: adminId,
+        text: res.text,
+        parse_mode: 'HTML'
       });
     }
+    return;
   }
 }
 
@@ -1640,7 +1680,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
 
     // Anti-Spam Flood Shield (budget checked for all links)
-    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length);
+    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length, env);
     if (rateLimitResult.blocked) {
       if (rateLimitResult.warning) {
         return tgCall(token, 'sendMessage', {
@@ -1678,6 +1718,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     }
 
     // Send 0% progress bar immediately for every link (No "In queue..." text!)
+    const groupJobPromises = [];
     for (const singleUrl of groupTikTokUrls) {
       userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
 
@@ -1692,7 +1733,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         statusMsgId = sm?.result?.message_id || null;
       } catch {}
 
-      enqueueUserJob(userId, async () => {
+      const jobPromise = enqueueUserJob(userId, async () => {
         try {
           await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
         } finally {
@@ -1704,7 +1745,13 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           }
         }
       });
+
+      groupJobPromises.push(jobPromise);
+      if (ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil(jobPromise);
+      }
     }
+    await Promise.all(groupJobPromises);
     return;
   }
 
@@ -1885,7 +1932,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   }
 
   // Anti-Spam Flood Shield (budget checked for all links)
-  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length);
+  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length, env);
   if (rateLimitResult.blocked) {
     if (rateLimitResult.warning) {
       return tgCall(token, "sendMessage", {
@@ -1927,6 +1974,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   }
 
   // Send 0% progress bar immediately for each link (No "In queue..." text!)
+  const privateJobPromises = [];
   for (const singleUrl of tiktokUrls) {
     userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
     let statusMsgId = null;
@@ -1940,7 +1988,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       statusMsgId = sm?.result?.message_id || null;
     } catch {}
 
-    enqueueUserJob(userId, async () => {
+    const jobPromise = enqueueUserJob(userId, async () => {
       try {
         await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
       } finally {
@@ -1952,7 +2000,14 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         }
       }
     });
+
+    privateJobPromises.push(jobPromise);
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(jobPromise);
+    }
   }
+
+  await Promise.all(privateJobPromises);
 }
 
 
