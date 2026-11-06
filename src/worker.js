@@ -288,6 +288,48 @@ export async function syncBotCommandsAndProfile(token, env = {}) {
     await tgCall(token, 'setMyShortDescription', { short_description: shortDesc });
   } catch {}
 
+  // Default Administrator Rights for Channels (ONLY Invite Users via Link)
+  try {
+    await tgCall(token, 'setMyDefaultAdministratorRights', {
+      rights: {
+        is_anonymous: false,
+        can_manage_chat: true,
+        can_delete_messages: false,
+        can_manage_video_chats: false,
+        can_restrict_members: false,
+        can_promote_members: false,
+        can_change_info: false,
+        can_invite_users: true,
+        can_post_stories: false,
+        can_edit_stories: false,
+        can_delete_stories: false,
+        can_post_messages: false,
+        can_edit_messages: false
+      },
+      for_channels: true
+    });
+  } catch {}
+
+  // Default Administrator Rights for Groups (ONLY Invite Users via Link)
+  try {
+    await tgCall(token, 'setMyDefaultAdministratorRights', {
+      rights: {
+        is_anonymous: false,
+        can_manage_chat: true,
+        can_delete_messages: false,
+        can_manage_video_chats: false,
+        can_restrict_members: false,
+        can_promote_members: false,
+        can_change_info: false,
+        can_invite_users: true,
+        can_post_stories: false,
+        can_edit_stories: false,
+        can_delete_stories: false
+      },
+      for_channels: false
+    });
+  } catch {}
+
   return { ok: true, commands: cmdRes, menu: menuRes };
 }
 
