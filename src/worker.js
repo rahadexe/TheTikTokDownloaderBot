@@ -1455,12 +1455,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
-    if (
-      cmdToken === '/channel' ||
-      cmdToken === '/sponsor' ||
-      cmdToken === '/addchannel' ||
-      cmdToken === '/setchannel'
-    ) {
+    if (cmdToken === '/channel') {
       const parts = text.trim().split(/\s+/);
       const newChan = parts[1]?.trim();
       const customLabel = parts.slice(2).join(' ').trim();
