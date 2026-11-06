@@ -483,9 +483,10 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
     (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget || (c.chat_key && c.chat_key === target)
   );
   if (isAlready) {
+    const kind = ['group', 'supergroup'].includes(chatObj.type) ? 'Group' : 'Channel';
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(dispName)} is already connected.</blockquote>`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${kind} is already connected.</blockquote>`
     };
   }
 
@@ -1511,14 +1512,16 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       if (!newChan) {
         const channels = await db.getConnectedChats(env);
         const chList = formatConnectedChatsList(channels);
+        const forceSubStatus = await db.getSetting('force_sub_status', env, 'on');
+        const statusTag = forceSubStatus === 'off' ? 'Paused' : 'Active';
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text:
             `💡 <b>Usage:</b> <code>/channel @username [Button Label]</code>\n\n` +
             `Example:\n<code>/channel @RHToolsOfficial Join RH Tools</code>\n\n` +
-            `To pause verification:\n<code>/channel off</code>\n\n` +
-            `To resume verification:\n<code>/channel on</code>\n\n` +
-            `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+            `To pause:\n<code>/channel off</code>\n\n` +
+            `To resume:\n<code>/channel on</code>\n\n` +
+            `<b>Connected Chats (${channels.length}/3) [${statusTag}]:</b>\n${chList}`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
         });
