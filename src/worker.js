@@ -590,6 +590,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   });
   await db.saveConnectedChats(channels, env);
   await db.setSetting('force_sub_status', 'on', env);
+  await db.setSetting('force_sub_channel', target, env);
 
   const labelInfo = customLabel ? ` [Button: <b>${escapeHtml(customLabel)}</b>]` : '';
   const chList = formatConnectedChatsList(channels);
@@ -628,17 +629,27 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
       await db.saveConnectedChats(newChannels, env);
       const dispTitle = removedChat?.title || title;
       const dispTarget = removedChat?.target || target;
-      await tgCall(token, 'sendMessage', {
-        chat_id: adminId,
-        text: `🗑️ <b>Chat Disconnected:</b> <b>${escapeHtml(dispTitle)}</b> (${escapeHtml(dispTarget)})`,
-        parse_mode: 'HTML'
-      });
+      await notifyAdminChannelIssue(
+        token,
+        adminId,
+        dispTarget,
+        oldStatus === 'administrator' && newStatus !== 'administrator' ? 'Bot admin permission removed' : 'Bot removed from chat',
+        'Auto disconnected',
+        true,
+        dispTitle,
+        env
+      );
     } else if (isAdmin) {
-      await tgCall(token, 'sendMessage', {
-        chat_id: adminId,
-        text: `🗑️ <b>Chat Disconnected:</b> <b>${escapeHtml(title)}</b> (${escapeHtml(target)})`,
-        parse_mode: 'HTML'
-      });
+      await notifyAdminChannelIssue(
+        token,
+        adminId,
+        target,
+        'Bot removed from chat',
+        'Auto disconnected',
+        true,
+        title,
+        env
+      );
     }
     return;
   }
@@ -656,7 +667,7 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
   }
 
   // 3. Authorized Admin added the bot as Administrator:
-  // Auto-connect chat (matching PhotoMetadataCleanerBot behavior)
+  // ONLY notify the admin with an opt-in button. NEVER auto-enable Join Verification without admin confirmation!
   if (['channel', 'group', 'supergroup'].includes(chat.type) && newStatus === 'administrator' && oldStatus !== 'administrator') {
     if (user?.id) adminViewState.set(user.id, 'PANEL');
     const channels = await db.getConnectedChats(env);
@@ -669,28 +680,33 @@ export async function handleMyChatMember(myChatMember, token, env = {}, ctx = nu
     );
     if (isAlreadyConnected) return;
 
+    const kind = ['group', 'supergroup'].includes(chat.type) ? 'Group' : 'Channel';
+    const disp = chat.username ? `@${chat.username}` : (chat.title || target);
+    const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chat.id);
+
+    let text;
+    let reply_markup = null;
+
     if (channels.length >= 3) {
-      await tgCall(token, 'sendMessage', {
-        chat_id: adminId,
-        text: `🔔 <b>Bot added to ${chat.type === 'channel' ? 'Channel' : 'Group'}:</b> <b>${escapeHtml(title)}</b>\n\n<blockquote>Join Verification limit reached (3/3). Not added.</blockquote>`,
-        parse_mode: 'HTML'
-      });
-      return;
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Join Verification limit reached (3/3). Not added.</blockquote>`;
+    } else if (!rightsOk) {
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Not added to Join Verification.\nReason: ${escapeHtml(rightsReason)}</blockquote>`;
+    } else {
+      text = `🔔 <b>Bot added to ${kind}:</b> ${escapeHtml(disp)}\n\n<blockquote>Use this chat for Join Verification?</blockquote>`;
+      reply_markup = {
+        inline_keyboard: [
+          [{ text: '✅ Add to Join Verification', callback_data: `fsub_add:${chat.id}` }],
+          [{ text: '✖️ Skip', callback_data: `fsub_skip:${chat.id}` }]
+        ]
+      };
     }
 
-    const res = await connectChatCore(token, env, target, title);
-    const updatedChannels = await db.getConnectedChats(env);
-    if (res.ok) {
+    if (user?.id) {
       await tgCall(token, 'sendMessage', {
-        chat_id: adminId,
-        text: `✅ <b>Connected:</b> <b>${escapeHtml(title)}</b> (${escapeHtml(target)})\n\n<b>Connected Chats (${updatedChannels.length}/3):</b>\n${formatConnectedChatsList(updatedChannels)}`,
-        parse_mode: 'HTML'
-      });
-    } else {
-      await tgCall(token, 'sendMessage', {
-        chat_id: adminId,
-        text: res.text,
-        parse_mode: 'HTML'
+        chat_id: user.id,
+        text,
+        parse_mode: 'HTML',
+        reply_markup
       });
     }
     return;
@@ -1553,7 +1569,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
-    if (cmdToken === '/channel' || cmdToken === '/channel_off' || cmdToken === '/channel_on') {
+    if (cmdToken === '/channel' || cmdToken === '/setchannel' || cmdToken === '/channel_off' || cmdToken === '/channel_on') {
       const parts = text.trim().split(/\s+/);
       const newChan = parts[1]?.trim();
       const customLabel = parts.slice(2).join(' ').trim();
