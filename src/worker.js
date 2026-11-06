@@ -435,7 +435,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
     }
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)}\nMake sure the bot is an admin in your channel.</blockquote>`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)} Make sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -453,7 +453,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
     }
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)}\nMake sure the bot is an admin in your channel.</blockquote>`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)} Make sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -463,7 +463,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   if (chatObj && chatObj.type === 'private') {
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Only channels and groups can be connected.\nMake sure the bot is an admin in your channel.</blockquote>`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Only channels and groups can be connected. Make sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -471,7 +471,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   if (!rightsOk) {
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Bot is not an administrator.\nMake sure the bot is an admin in your channel.</blockquote>`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Bot is not an administrator. Make sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -901,14 +901,15 @@ async function showAdminDashboard(chatId, token, env) {
     `Total Users: <b>${totalUsers}</b>\n` +
     `Active Users: <b>${activeUsers}</b>\n` +
     `Total Downloads: <b>${totalDownloads}</b>\n` +
-    `Cached Videos: <b>${cachedVideos}</b>` +
+    `Cached Videos: <b>${cachedVideos}</b>\n` +
+    `Force Join Gate: <b>${statusTag}</b>` +
     `</blockquote>`;
 
   let dashboardText;
   if (channels.length > 0) {
-    dashboardText = `${statsBlock}\n\n<b>Connected Chats (${channels.length}/3) [${statusTag}]:</b>\n${chList}`;
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`;
   } else {
-    dashboardText = `${statsBlock}\n\n<b>Connected Chats (0/3) [${statusTag}]</b>`;
+    dashboardText = `${statsBlock}\n\n<b>Connected Chats (0/3)</b>`;
   }
 
   return tgCall(token, 'sendMessage', {
@@ -1521,7 +1522,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
             `Example:\n<code>/channel @RHToolsOfficial Join RH Tools</code>\n\n` +
             `To pause:\n<code>/channel off</code>\n\n` +
             `To resume:\n<code>/channel on</code>\n\n` +
-            `<b>Connected Chats (${channels.length}/3) [${statusTag}]:</b>\n${chList}`,
+            `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
         });
