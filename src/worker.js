@@ -249,7 +249,8 @@ export async function notifyAdminChannelIssue(
 
 export async function syncBotCommandsAndProfile(token, env = {}) {
   const commands = [
-    { command: 'start', description: 'Start the bot' }
+    { command: 'start', description: 'Start the bot' },
+    { command: 'help', description: 'How to use the bot' }
   ];
   let cmdRes = null;
   try {
@@ -1551,7 +1552,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       await syncBotCommandsAndProfile(token, env);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '✅ <b>Bot Commands & Profile Synced!</b>\n\n<code>/start</code> command and Menu button are now registered with Telegram.',
+        text: '✅ <b>Bot Commands & Profile Synced!</b>\n\n<code>/start</code> and <code>/help</code> commands and Menu button are now registered with Telegram.',
         parse_mode: 'HTML',
         reply_markup: getMainAdminKeyboard()
       });
@@ -1560,8 +1561,24 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   const isGroup = msg.chat?.type === 'group' || msg.chat?.type === 'supergroup';
 
+  const helpText =
+    '<b>How to Use:</b>\n\n' +
+    '<blockquote>1. Copy any video or photo link from TikTok.\n' +
+    '2. Send the link here.\n' +
+    '3. Clean video is returned without watermark.</blockquote>\n\n' +
+    'Supports TikTok videos, photos, and audio.';
+
+  if (cmdToken === '/help') {
+    return tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: helpText,
+      parse_mode: 'HTML',
+      reply_to_message_id: isGroup ? msg.message_id : undefined
+    });
+  }
+
   // Group /start handler: when admin adds bot to group or deep-links ?startgroup=true
-  if (isGroup && (cmdToken === '/start' || cmdToken === '/help')) {
+  if (isGroup && cmdToken === '/start') {
     if (isAdminUser) {
       try {
         await tgCall(token, 'deleteMessage', { chat_id: chatId, message_id: msg.message_id });
@@ -1667,10 +1684,13 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
-  // /start or /help command in private chat
-  if (cmdToken === '/start' || cmdToken === '/help') {
+  // /start command in private chat
+  if (cmdToken === '/start') {
     if (msg.from) {
       await db.upsertUser({ id: userId, username: msg.from.username, firstName: msg.from.first_name }, env).catch(() => {});
+    }
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(syncBotCommandsAndProfile(token, env).catch(() => {}));
     }
     const payloadPart = text.includes(' ') ? text.slice(text.indexOf(' ') + 1).trim() : '';
     if (payloadPart === 'verify') {
@@ -1692,14 +1712,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
     if (payloadPart === 'guide') {
-      const botTag = await getBotTag(token);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text:
-          '💡 <b>How to Download:</b>\n\n' +
-          '<blockquote>1. Copy any video or photo link from TikTok.\n' +
-          '2. Send the link here to download instantly!\n' +
-          '3. Type ' + botTag + ' in any chat to share videos directly.</blockquote>',
+        text: helpText,
         parse_mode: 'HTML'
       });
     }
@@ -1761,8 +1776,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         const userName = msg.from?.first_name || 'there';
         const welcome =
           `👋 <b>Welcome, ${escapeHtml(userName)}!</b>\n\n` +
-          `<blockquote>Download videos and audio from TikTok.</blockquote>\n\n` +
-          `Send a link to download.`;
+          `<blockquote>Download TikTok videos, photos, and audio with 100% high quality and without watermark.</blockquote>\n\n` +
+          `Send any TikTok link to download.`;
 
         if (isAdminUser) {
           adminViewState.set(userId, 'MAIN');
