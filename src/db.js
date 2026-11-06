@@ -1063,3 +1063,36 @@ export async function clearServerErrors(env) {
     } catch {}
   }
 }
+
+
+export async function getRecentDownloads(limit = 50, env) {
+  await ensureD1Schema(env);
+  if (env?.DB) {
+    try {
+      const res = await env.DB.prepare(`
+        SELECT ud.id, ud.user_id, ud.video_id, ud.source_url, ud.media_type, ud.created_at,
+               u.username, u.first_name, vc.title, vc.duration, vc.hits
+        FROM user_downloads ud
+        LEFT JOIN users u ON ud.user_id = u.id
+        LEFT JOIN video_cache vc ON ud.video_id = vc.video_id
+        ORDER BY ud.id DESC
+        LIMIT ?
+      `).bind(limit).all();
+      return res.results || [];
+    } catch {}
+  } else if (isNodeSqlite && db) {
+    try {
+      const rows = db.prepare(`
+        SELECT ud.id, ud.user_id, ud.video_id, ud.source_url, ud.media_type, ud.created_at,
+               u.username, u.first_name, vc.title, vc.duration, vc.hits
+        FROM user_downloads ud
+        LEFT JOIN users u ON ud.user_id = u.id
+        LEFT JOIN video_cache vc ON ud.video_id = vc.video_id
+        ORDER BY ud.id DESC
+        LIMIT ?
+      `).all(limit);
+      return rows || [];
+    } catch {}
+  }
+  return [];
+}

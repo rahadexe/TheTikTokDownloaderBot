@@ -1471,49 +1471,83 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
       const channels = await db.getConnectedChats(env);
       const errors = await db.getRecentServerErrors(100, env);
+      const downloads = await db.getRecentDownloads(100, env);
 
       let stats = { users: 0, downloads: 0, cached: 0, cacheHits: 0 };
       try {
         stats = await db.getStats(env);
       } catch {}
 
-      const chList = channels.map((c, i) => `  ${i + 1}. ${c.title || c.target} (${c.target}) [${c.type || 'channel'}]`).join('\n') || '  None connected';
+      const chList = channels.map((c, i) => `  ${i + 1}. ${c.title || c.target} (${c.target}) [${c.type || 'channel'}] -> ${c.url || 'N/A'}`).join('\n') || '  None connected';
 
-      const logHeader = [
+      let downloadSection = 'No recent user media downloads recorded in current database.';
+      if (downloads && downloads.length > 0) {
+        downloadSection = downloads.map((d, i) => {
+          const userStr = d.username ? `@${d.username} (ID: ${d.user_id})` : `ID: ${d.user_id}`;
+          const durStr = d.duration ? `${d.duration}s` : 'N/A';
+          return `#${i + 1} [${d.created_at}] [${(d.media_type || 'VIDEO').toUpperCase()}]\n    User    : ${userStr}\n    Title   : ${d.title || 'Untitled'}\n    Duration: ${durStr} | Hits: ${d.hits || 1}\n    Source  : ${d.source_url || 'N/A'}`;
+        }).join('\n\n');
+      }
+
+      let errorSection = 'Zero error incidents logged. Extraction & API operations running at 100% health.';
+      if (errors && errors.length > 0) {
+        errorSection = errors.map((e, i) => {
+          const userStr = e.username ? `@${e.username} (ID: ${e.user_id || 'N/A'})` : e.user_id ? `ID: ${e.user_id}` : 'System / N/A';
+          return `#${i + 1} [${e.created_at}] [${e.platform || 'TIKTOK'}] [${e.error_type || 'Error'}]\n    Target User : ${userStr}\n    URL         : ${e.url || 'N/A'}\n    Message     : ${e.error_message}`;
+        }).join('\n\n');
+      }
+
+      const logSections = [
         '================================================================================',
-        '                        BOT SYSTEM AUDIT & DIAGNOSTIC LOGS                       ',
+        '       TIKTOK DOWNLOADER BOT - COMPLETE A-Z SYSTEM AUDIT & DIAGNOSTIC LOG       ',
         '================================================================================',
-        `Generated: ${nowStr} UTC`,
-        `Platform : Cloudflare Workers Edge Runtime + D1 SQL Database`,
-        `Bot Name : @${botTag}`,
-        `Admin ID : ${adminId}`,
-        `Status   : Operational (100% Health)`,
+        `Generated At   : ${nowStr} UTC`,
+        `Platform       : Cloudflare Workers Edge Runtime + D1 Serverless SQL`,
+        `Bot Username   : @${botTag}`,
+        `Admin ID       : ${adminId}`,
+        `System Status  : Operational (${errors.length === 0 ? '100% Health' : `${errors.length} Incident(s) Recorded`})`,
         '',
         '--------------------------------------------------------------------------------',
-        'SYSTEM ENVIRONMENT & BOT CONFIGURATION',
+        '[1] SYSTEM CONFIGURATION & REAL-TIME PERFORMANCE METRICS',
         '--------------------------------------------------------------------------------',
-        `Low Cost Mode : ${env.LOW_COST_MODE || 'true'}`,
-        `Database Type : Cloudflare D1 Serverless SQL`,
+        `Database Engine       : Cloudflare D1 Serverless SQL`,
         `Total Registered Users: ${stats.users || 0}`,
         `Total Delivered Media : ${stats.downloads || 0}`,
         `Cached Unique Hashes  : ${stats.cached || 0}`,
-        `Instant Cache Hits    : ${stats.cacheHits || 0}`,
+        `Instant Cache Hits    : ${stats.cacheHits || 0} (${stats.downloads > 0 ? Math.round((stats.cacheHits / stats.downloads) * 100) : 0}% cache ratio)`,
+        `Low Cost Mode         : ${env.LOW_COST_MODE || 'true'}`,
+        '',
+        '--------------------------------------------------------------------------------',
+        '[2] CONNECTED VERIFICATION CHANNELS & FORCE-SUB GATE',
+        '--------------------------------------------------------------------------------',
         `Connected Force-Sub Chats: ${channels.length}/3`,
         chList,
         '',
         '--------------------------------------------------------------------------------',
-        'INCIDENT LOGS & EXTRACTION ERRORS',
-        '--------------------------------------------------------------------------------'
+        '[3] OPERATIONAL SECURITY & RATE LIMITING POLICIES',
+        '--------------------------------------------------------------------------------',
+        `Rate Limiting Policy   : Max 10 links per 60 seconds (Applies equally to Admin and Users)`,
+        `Single Link Queue      : Strictly 1 link per job execution (prevents Worker overload)`,
+        `Direct Reply Notice    : ⏱ Back in ...s notifications sent as direct reply to message`,
+        `Admin Real-time Alerts : Enabled (Instant Telegram alert on extraction failure & kicks)`,
+        '',
+        '--------------------------------------------------------------------------------',
+        '[4] RECENT USER DOWNLOADS & MEDIA DELIVERY STREAM (A to Z)',
+        '--------------------------------------------------------------------------------',
+        downloadSection,
+        '',
+        '--------------------------------------------------------------------------------',
+        '[5] INCIDENT LOGS & EXTRACTION ERRORS (A to Z)',
+        '--------------------------------------------------------------------------------',
+        errorSection,
+        '',
+        '================================================================================',
+        '                            END OF SYSTEM AUDIT LOG                             ',
+        '================================================================================',
+        ''
       ];
 
-      let errorSection = '';
-      if (!errors || errors.length === 0) {
-        errorSection = 'Zero error incidents logged. Extraction & API operations running at 100% health.';
-      } else {
-        errorSection = errors.map((e, i) => `#${i + 1} [${e.created_at}] [${e.platform || 'TIKTOK'}] ${e.error_message}\n    URL: ${e.url}`).join('\n\n');
-      }
-
-      const fullLog = `${logHeader.join('\n')}\n${errorSection}\n\n================================================================================\nEND OF LOG FILE\n================================================================================\n`;
+      const fullLog = logSections.join('\n');
 
       try {
         const blob = new Blob([fullLog], { type: 'text/plain;charset=utf-8' });
