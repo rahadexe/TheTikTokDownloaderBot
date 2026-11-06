@@ -876,9 +876,19 @@ export function formatConnectedChatsList(channels = []) {
   if (!channels || channels.length === 0) return '• <i>None</i>';
   return channels
     .map((c) => {
-      const label = c.button_label || c.buttonLabel;
-      const labelTag = label ? ` <i>(${escapeHtml(label)})</i>` : '';
-      return `• <b>${escapeHtml(c.title || c.target)}</b>${labelTag}`;
+      const title = c.title || c.target;
+      const target = c.target || '';
+      const url =
+        c.invite_url ||
+        (target.startsWith('https://')
+          ? target
+          : target.startsWith('@')
+          ? `https://t.me/${target.replace(/^@/, '')}`
+          : '');
+      if (url) {
+        return `• <a href="${url}"><b>${escapeHtml(title)}</b></a>`;
+      }
+      return `• <b>${escapeHtml(title)}</b>`;
     })
     .join('\n');
 }
