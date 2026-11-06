@@ -1484,21 +1484,31 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
   // In Groups/Supergroups: ONLY respond when valid TikTok link(s) are detected!
   // Stay 100% silent for any other text, conversation, or non-TikTok links (FB, IG, YouTube, etc.)
   if (isGroup) {
-    const groupTikTokUrls = extractAllTikTokUrls(text, 1);
-    if (groupTikTokUrls.length === 0) {
+    const allGroupTikTokUrls = extractAllTikTokUrls(text, 100);
+    if (allGroupTikTokUrls.length === 0) {
       return; // Silently ignore all non-TikTok messages in groups
     }
 
-    const singleUrl = groupTikTokUrls[0];
+    let groupTikTokUrls = allGroupTikTokUrls;
+    if (allGroupTikTokUrls.length > 5) {
+      groupTikTokUrls = allGroupTikTokUrls.slice(0, 5);
+      await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '⚠️ <b>Maximum 5 links supported at once!</b>\n<blockquote>Processing the first 5 links. Please send the remaining links in a separate message.</blockquote>',
+        parse_mode: 'HTML',
+        reply_to_message_id: msg.message_id
+      }).catch(() => {});
+    }
 
-    // Anti-Spam Flood Shield (Max 10 links per 60 seconds per user in group)
-    const rateLimitResult = checkUserRateLimit(userId, 1);
+    // Anti-Spam Flood Shield (budget checked for all links)
+    const rateLimitResult = checkUserRateLimit(userId, groupTikTokUrls.length);
     if (rateLimitResult.blocked) {
       if (rateLimitResult.warning) {
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text: rateLimitResult.warning,
-          parse_mode: 'HTML'
+          parse_mode: 'HTML',
+          reply_to_message_id: msg.message_id
         });
       }
       return;
@@ -1515,50 +1525,46 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         if (missing.length === 0) {
           db.setUserVerifiedMemory(userId);
         } else {
-          db.setPendingLink(userId, { url: singleUrl, chatId, replyToMsgId: msg.message_id });
+          db.setPendingLink(userId, { url: groupTikTokUrls[0], chatId, replyToMsgId: msg.message_id });
           const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
           return tgCall(token, 'sendMessage', {
             chat_id: chatId,
             text: promptText,
             parse_mode: 'HTML',
-            reply_markup: markup
+            reply_markup: markup,
+            reply_to_message_id: msg.message_id
           });
         }
       }
     }
 
-    const isQueued = (userActiveJobs.get(userId) || 0) > 0;
-    userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
+    // Send 0% progress bar immediately for every link (No "In queue..." text!)
+    for (const singleUrl of groupTikTokUrls) {
+      userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
 
-    let statusMsgId = null;
-    try {
-      const sm = await tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text: isQueued ? '⏳ <b>In queue...</b>' : '░░░░░░░░░░ <b>0%</b>',
-        parse_mode: 'HTML'
-      });
-      statusMsgId = sm?.result?.message_id || null;
-    } catch {}
+      let statusMsgId = null;
+      try {
+        const sm = await tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: '░░░░░░░░░░ <b>0%</b>',
+          parse_mode: 'HTML',
+          reply_to_message_id: msg.message_id
+        });
+        statusMsgId = sm?.result?.message_id || null;
+      } catch {}
 
-    try {
-      await enqueueUserJob(userId, async () => {
-        if (isQueued && statusMsgId) {
-          await tgCall(token, 'editMessageText', {
-            chat_id: chatId,
-            message_id: statusMsgId,
-            text: '░░░░░░░░░░ <b>0%</b>',
-            parse_mode: 'HTML'
-          }).catch(() => {});
+      enqueueUserJob(userId, async () => {
+        try {
+          await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
+        } finally {
+          const cur = (userActiveJobs.get(userId) || 1) - 1;
+          if (cur <= 0) {
+            userActiveJobs.delete(userId);
+          } else {
+            userActiveJobs.set(userId, cur);
+          }
         }
-        await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
       });
-    } finally {
-      const cur = (userActiveJobs.get(userId) || 1) - 1;
-      if (cur <= 0) {
-        userActiveJobs.delete(userId);
-      } else {
-        userActiveJobs.set(userId, cur);
-      }
     }
     return;
   }
@@ -1709,9 +1715,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     });
   }
 
-  // Detect TikTok link (strictly 1 link per message)
-  const tiktokUrls = extractAllTikTokUrls(text, 1);
-  if (tiktokUrls.length === 0) {
+  // Detect TikTok links (up to 5 links per message)
+  const allTiktokUrls = extractAllTikTokUrls(text, 100);
+  if (allTiktokUrls.length === 0) {
     if (msg.via_bot) return;
     if (msg.chat?.type === "private" && !text.startsWith("/")) {
       const anyUrl = /https?:\/\/[^\s]+/i.test(text);
@@ -1730,16 +1736,26 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     return;
   }
 
-  const singleUrl = tiktokUrls[0];
+  let tiktokUrls = allTiktokUrls;
+  if (allTiktokUrls.length > 5) {
+    tiktokUrls = allTiktokUrls.slice(0, 5);
+    await tgCall(token, 'sendMessage', {
+      chat_id: chatId,
+      text: '⚠️ <b>Maximum 5 links supported at once!</b>\n<blockquote>Processing the first 5 links. Please send the remaining links in a separate message.</blockquote>',
+      parse_mode: 'HTML',
+      reply_to_message_id: msg.message_id
+    }).catch(() => {});
+  }
 
-  // Anti-Spam Flood Shield (Max 10 links per 60 seconds)
-  const rateLimitResult = checkUserRateLimit(userId, 1);
+  // Anti-Spam Flood Shield (budget checked for all links)
+  const rateLimitResult = checkUserRateLimit(userId, tiktokUrls.length);
   if (rateLimitResult.blocked) {
     if (rateLimitResult.warning) {
       return tgCall(token, "sendMessage", {
         chat_id: chatId,
         text: rateLimitResult.warning,
-        parse_mode: "HTML"
+        parse_mode: "HTML",
+        reply_to_message_id: msg.message_id
       });
     }
     return;
@@ -1760,49 +1776,45 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       if (missing.length === 0) {
         db.setUserVerifiedMemory(userId);
       } else {
-        db.setPendingLink(userId, { url: singleUrl, chatId, replyToMsgId: msg.message_id });
+        db.setPendingLink(userId, { url: tiktokUrls[0], chatId, replyToMsgId: msg.message_id });
         const { text: promptText, reply_markup: markup } = buildForceSubPrompt(missing);
         return tgCall(token, "sendMessage", {
           chat_id: chatId,
           text: promptText,
           parse_mode: "HTML",
-          reply_markup: markup
+          reply_markup: markup,
+          reply_to_message_id: msg.message_id
         });
       }
     }
   }
 
-  const isQueued = (userActiveJobs.get(userId) || 0) > 0;
-  userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
-  let statusMsgId = null;
-  try {
-    const sm = await tgCall(token, 'sendMessage', {
-      chat_id: chatId,
-      text: isQueued ? '⏳ <b>In queue...</b>' : '░░░░░░░░░░ <b>0%</b>',
-      parse_mode: 'HTML'
-    });
-    statusMsgId = sm?.result?.message_id || null;
-  } catch {}
+  // Send 0% progress bar immediately for each link (No "In queue..." text!)
+  for (const singleUrl of tiktokUrls) {
+    userActiveJobs.set(userId, (userActiveJobs.get(userId) || 0) + 1);
+    let statusMsgId = null;
+    try {
+      const sm = await tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text: '░░░░░░░░░░ <b>0%</b>',
+        parse_mode: 'HTML',
+        reply_to_message_id: msg.message_id
+      });
+      statusMsgId = sm?.result?.message_id || null;
+    } catch {}
 
-  try {
-    await enqueueUserJob(userId, async () => {
-      if (isQueued && statusMsgId) {
-        await tgCall(token, 'editMessageText', {
-          chat_id: chatId,
-          message_id: statusMsgId,
-          text: '░░░░░░░░░░ <b>0%</b>',
-          parse_mode: 'HTML'
-        }).catch(() => {});
+    enqueueUserJob(userId, async () => {
+      try {
+        await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
+      } finally {
+        const cur = (userActiveJobs.get(userId) || 1) - 1;
+        if (cur <= 0) {
+          userActiveJobs.delete(userId);
+        } else {
+          userActiveJobs.set(userId, cur);
+        }
       }
-      await processTikTokDownload(singleUrl, chatId, msg.from, token, env, ctx, statusMsgId, msg.message_id);
     });
-  } finally {
-    const cur = (userActiveJobs.get(userId) || 1) - 1;
-    if (cur <= 0) {
-      userActiveJobs.delete(userId);
-    } else {
-      userActiveJobs.set(userId, cur);
-    }
   }
 }
 
