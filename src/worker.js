@@ -1455,10 +1455,18 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
-    if (cmdToken === '/channel') {
+    if (cmdToken === '/channel' || cmdToken === '/channel_off') {
       const parts = text.trim().split(/\s+/);
       const newChan = parts[1]?.trim();
       const customLabel = parts.slice(2).join(' ').trim();
+      if (cmdToken === '/channel_off' || newChan?.toLowerCase() === 'off') {
+        await db.saveConnectedChats([], env);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text: 'Force-sub channel disabled.',
+          reply_markup: getAdminPanelKeyboard([])
+        });
+      }
       if (!newChan) {
         const channels = await db.getConnectedChats(env);
         const chList = formatConnectedChatsList(channels);
@@ -1471,14 +1479,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
             `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
-        });
-      }
-      if (newChan.toLowerCase() === 'off') {
-        await db.saveConnectedChats([], env);
-        return tgCall(token, 'sendMessage', {
-          chat_id: chatId,
-          text: 'Force-sub channel disabled.',
-          reply_markup: getAdminPanelKeyboard([])
         });
       }
       const res = await connectChatCore(token, env, newChan, '', customLabel);
