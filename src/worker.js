@@ -359,7 +359,8 @@ export function buildForceSubPrompt(missingChannels = []) {
   const buttons = missingChannels.map((ch) => {
     const target = ch.target || '';
     const isGroup = ch.type === 'group' || target.startsWith('-');
-    const label = isGroup ? '👥 Join Group' : '📢 Join Channel';
+    const defaultLabel = isGroup ? '👥 Join Group' : '📢 Join Channel';
+    const label = ch.button_label?.trim() || ch.buttonLabel?.trim() || defaultLabel;
     const url = ch.invite_url || (target.startsWith('https://') ? target : `https://t.me/${target.replace(/^@/, '')}`);
     return [{ text: label, url }];
   });
@@ -385,10 +386,7 @@ export async function checkBotChatRights(token, chatId) {
     const st = res.status;
     if (st === 'creator') return { ok: true, reason: '' };
     if (st !== 'administrator') {
-      return { ok: false, reason: 'Bot must be added as Administrator with Invite Users permission' };
-    }
-    if (res.can_invite_users === false) {
-      return { ok: false, reason: 'Bot is missing "Invite Users via Link" admin permission' };
+      return { ok: false, reason: 'Bot must be added as Administrator' };
     }
     return { ok: true, reason: '' };
   } catch (err) {
@@ -396,7 +394,7 @@ export async function checkBotChatRights(token, chatId) {
   }
 }
 
-export async function connectChatCore(token, env, targetRef, fallbackTitle = '') {
+export async function connectChatCore(token, env, targetRef, fallbackTitle = '', buttonLabel = '') {
   let cleanTarget = String(targetRef).trim();
   const botTag = await getBotTag(token);
   const ownBot = (botTag || '').replace(/^@/, '').toLowerCase();
@@ -409,13 +407,34 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '')
     };
   }
 
+  // Normalize target format
+  if (cleanTarget.includes('t.me/')) {
+    cleanTarget = `@${cleanTarget.split('t.me/')[1].replace('/', '')}`;
+  }
+  if (!cleanTarget.startsWith('@') && !cleanTarget.startsWith('-100') && isNaN(Number(cleanTarget))) {
+    cleanTarget = `@${cleanTarget}`;
+  }
+
   let chatCheck = null;
   try {
     chatCheck = await tgCall(token, 'getChat', { chat_id: cleanTarget });
-  } catch {}
+  } catch (err) {
+    return {
+      ok: false,
+      text: `⚠️ <b>Failed to connect chat:</b> <code>${escapeHtml(err.message || 'Chat not found')}</code>\nMake sure the bot is an <b>Administrator</b> in that channel.`
+    };
+  }
 
-  const chatObj = chatCheck?.ok ? chatCheck.result : null;
-  const dispName = chatObj?.title || fallbackTitle || cleanTarget;
+  if (!chatCheck?.ok || !chatCheck.result) {
+    const errMsg = chatCheck?.description || 'Chat not found';
+    return {
+      ok: false,
+      text: `⚠️ <b>Failed to connect chat:</b> <code>${escapeHtml(errMsg)}</code>\nMake sure the bot is an <b>Administrator</b> in that channel.`
+    };
+  }
+
+  const chatObj = chatCheck.result;
+  const dispName = chatObj.title || chatObj.username || fallbackTitle || cleanTarget;
 
   if (chatObj && chatObj.type === 'private') {
     return {
@@ -424,17 +443,18 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '')
     };
   }
 
-  const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chatObj?.id || cleanTarget);
+  const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chatObj.id || cleanTarget);
   if (!rightsOk) {
+    const botUser = (botTag || 'TheTikTokDownloaderBot').replace(/^@/, '');
     return {
       ok: false,
-      text: `⚠️ <b>Admin Rights Required:</b> ${escapeHtml(dispName)}\n\n<blockquote>${escapeHtml(rightsReason)}</blockquote>`
+      text: `⚠️ <b>Failed to connect:</b> Bot is not an Administrator in <b>${escapeHtml(dispName)}</b>!\n\nPlease add <b>@${escapeHtml(botUser)}</b> as an <b>Administrator</b> in that channel first.`
     };
   }
 
   const channels = await db.getConnectedChats(env);
-  const target = chatObj?.username ? `@${chatObj.username}` : (cleanTarget.startsWith('@') ? cleanTarget : String(chatObj?.id || cleanTarget));
-  const altTarget = String(chatObj?.id || cleanTarget);
+  const target = chatObj.username ? `@${chatObj.username}` : (cleanTarget.startsWith('@') ? cleanTarget : String(chatObj.id || cleanTarget));
+  const altTarget = String(chatObj.id || cleanTarget);
 
   const isAlready = channels.some(
     (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget || (c.chat_key && c.chat_key === target)
@@ -443,7 +463,7 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '')
     const chList = formatConnectedChatsList(channels);
     return {
       ok: false,
-      text: `Already connected: <b>${escapeHtml(dispName)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
+      text: `⚠️ <b>${escapeHtml(dispName)}</b> is already connected.\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
     };
   }
 
@@ -454,28 +474,31 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '')
     };
   }
 
-  let inviteUrl = chatObj?.invite_link || '';
-  if (!inviteUrl && !chatObj?.username) {
+  let inviteUrl = chatObj.invite_link || '';
+  if (!inviteUrl && !chatObj.username) {
     try {
-      const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chatObj?.id || cleanTarget });
+      const exp = await tgCall(token, 'exportChatInviteLink', { chat_id: chatObj.id || cleanTarget });
       if (exp?.ok && typeof exp.result === 'string') inviteUrl = exp.result;
     } catch {}
   }
 
-  const chatType = chatObj?.type || (String(cleanTarget).startsWith('-') ? 'channel' : 'channel');
+  const chatType = chatObj.type || (String(cleanTarget).startsWith('-') ? 'group' : 'channel');
+  const customLabel = buttonLabel?.trim() || undefined;
   channels.push({
     target,
-    title: chatObj?.title || dispName,
+    title: chatObj.title || dispName,
     chat_key: altTarget,
     type: ['group', 'supergroup'].includes(chatType) ? 'group' : 'channel',
-    invite_url: inviteUrl
+    invite_url: inviteUrl || (chatObj.username ? `https://t.me/${chatObj.username}` : ''),
+    button_label: customLabel
   });
   await db.saveConnectedChats(channels, env);
 
+  const labelInfo = customLabel ? ` [Button: <b>${escapeHtml(customLabel)}</b>]` : '';
   const chList = formatConnectedChatsList(channels);
   return {
     ok: true,
-    text: `✅ Connected: <b>${escapeHtml(dispName)}</b>\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
+    text: `✅ Connected: <b>${escapeHtml(dispName)}</b>${labelInfo}\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
   };
 }
 
@@ -827,7 +850,13 @@ export function formatAutoDeleteLabel(mins) {
 
 export function formatConnectedChatsList(channels = []) {
   if (!channels || channels.length === 0) return '• <i>None</i>';
-  return channels.map((c) => `• <b>${escapeHtml(c.title || c.target)}</b>`).join('\n');
+  return channels
+    .map((c) => {
+      const label = c.button_label || c.buttonLabel;
+      const labelTag = label ? ` <i>(${escapeHtml(label)})</i>` : '';
+      return `• <b>${escapeHtml(c.title || c.target)}</b>${labelTag}`;
+    })
+    .join('\n');
 }
 
 async function showAdminDashboard(chatId, token, env) {
@@ -1384,21 +1413,31 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     if (adminWaitingAddChat.get(userId)) {
       let targetCh = null;
       let targetTitle = null;
+      let targetLabel = '';
       const fwdChat = msg.forward_from_chat;
       if (fwdChat) {
         targetCh = fwdChat.username ? `@${fwdChat.username}` : String(fwdChat.id);
         targetTitle = fwdChat.title;
-      } else if (text.startsWith('@') || text.startsWith('-100')) {
-        targetCh = text.trim().split(/\s+/)[0];
       } else {
-        const tme = text.trim().match(/^(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([A-Za-z0-9_]{4,})\/?$/i);
-        if (tme) targetCh = `@${tme[1]}`;
+        const parts = text.trim().split(/\s+/);
+        const first = parts[0];
+        targetLabel = parts.slice(1).join(' ').trim();
+        if (first.startsWith('@') || first.startsWith('-100')) {
+          targetCh = first;
+        } else {
+          const tme = first.match(/^(?:https?:\/\/)?(?:t\.me|telegram\.me)\/([A-Za-z0-9_]{4,})\/?$/i);
+          if (tme) {
+            targetCh = `@${tme[1]}`;
+          } else if (!first.startsWith('/')) {
+            targetCh = first;
+          }
+        }
       }
 
       if (targetCh) {
         adminWaitingAddChat.delete(userId);
         adminViewState.set(userId, 'PANEL');
-        const res = await connectChatCore(token, env, targetCh, targetTitle || '');
+        const res = await connectChatCore(token, env, targetCh, targetTitle || '', targetLabel);
         const channels = await db.getConnectedChats(env);
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
@@ -1416,11 +1455,28 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       }
     }
 
-    if (cmdToken === '/channel' || cmdToken === '/setchannel') {
-      const parts = text.split(/\s+/);
+    if (
+      cmdToken === '/channel' ||
+      cmdToken === '/sponsor' ||
+      cmdToken === '/addchannel' ||
+      cmdToken === '/setchannel'
+    ) {
+      const parts = text.trim().split(/\s+/);
       const newChan = parts[1]?.trim();
+      const customLabel = parts.slice(2).join(' ').trim();
       if (!newChan) {
-        return showAdminDashboard(chatId, token, env);
+        const channels = await db.getConnectedChats(env);
+        const chList = formatConnectedChatsList(channels);
+        return tgCall(token, 'sendMessage', {
+          chat_id: chatId,
+          text:
+            `💡 <b>Usage:</b> <code>/channel @username [Button Label]</code>\n\n` +
+            `Example:\n<code>/channel @RHToolsOfficial Join RH Tools</code>\n\n` +
+            `To disable force-sub:\n<code>/channel off</code>\n\n` +
+            `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+          parse_mode: 'HTML',
+          reply_markup: getAdminPanelKeyboard(channels)
+        });
       }
       if (newChan.toLowerCase() === 'off') {
         await db.saveConnectedChats([], env);
@@ -1430,20 +1486,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           reply_markup: getAdminPanelKeyboard([])
         });
       }
-      const formatted = newChan.startsWith('@') || newChan.startsWith('-') || newChan.startsWith('https://')
-        ? newChan
-        : '@' + newChan;
+      const res = await connectChatCore(token, env, newChan, '', customLabel);
       const channels = await db.getConnectedChats(env);
-      if (!channels.some((c) => c.target === formatted)) {
-        if (channels.length >= 3) channels.pop();
-        channels.unshift({ target: formatted, title: formatted, chat_key: formatted });
-        await db.saveConnectedChats(channels, env);
-      }
-      await db.setSetting('force_sub_channel', formatted, env);
-      const chList = formatConnectedChatsList(channels);
       return tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: `Force-sub channel updated to <b>${formatted}</b>.\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
+        text: res.text,
         parse_mode: 'HTML',
         reply_markup: getAdminPanelKeyboard(channels)
       });
