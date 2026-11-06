@@ -746,7 +746,7 @@ export function getMainAdminKeyboard() {
   };
 }
 
-export function getAdminPanelKeyboard(channels = []) {
+export function getAdminPanelKeyboard(channels = [], isForceSubActive = true) {
   const chRights = {
     is_anonymous: false,
     can_manage_chat: true,
@@ -811,9 +811,10 @@ export function getAdminPanelKeyboard(channels = []) {
 
   const rows = [addRow];
   if (channels.length > 0) {
-    rows.push([{ text: '🗑️ Disconnect' }, { text: '📣 Broadcast' }]);
-    rows.push([{ text: '📊 Activity' }, { text: '🗑️ Clear Cache' }]);
-    rows.push([{ text: 'Back' }]);
+    const pauseBtn = isForceSubActive ? { text: '⏸️ Pause Join' } : { text: '▶️ Resume Join' };
+    rows.push([pauseBtn, { text: '🗑️ Disconnect' }]);
+    rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache' }]);
+    rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
   } else {
     rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache' }]);
     rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
@@ -895,7 +896,7 @@ async function showAdminDashboard(chatId, token, env) {
     chat_id: chatId,
     text: dashboardText,
     parse_mode: 'HTML',
-    reply_markup: getAdminPanelKeyboard(channels)
+    reply_markup: getAdminPanelKeyboard(channels, forceSubStatus !== 'off')
   });
 }
 
@@ -1146,6 +1147,33 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   // Admin Navigation Handlers
   if (isAdminUser) {
+    if (['⏸️ Pause Join', 'Pause Join'].includes(text)) {
+      await db.setSetting('force_sub_status', 'off', env);
+      const channels = await db.getConnectedChats(env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text:
+          '⏸️ <b>Join Verification Paused</b>\n\n' +
+          'Channels remain saved in your list. Users can now download directly without verification.\n\n' +
+          'To resume anytime, tap Resume Join or send:\n<code>/channel on</code>',
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(channels, false)
+      });
+    }
+
+    if (['▶️ Resume Join', 'Resume Join'].includes(text)) {
+      await db.setSetting('force_sub_status', 'on', env);
+      const channels = await db.getConnectedChats(env);
+      return tgCall(token, 'sendMessage', {
+        chat_id: chatId,
+        text:
+          '▶️ <b>Join Verification Active</b>\n\n' +
+          'Join verification is now active for all connected channels.',
+        parse_mode: 'HTML',
+        reply_markup: getAdminPanelKeyboard(channels, true)
+      });
+    }
+
     if (['Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin', 'Refresh', '🔄 Refresh', '⬅️ Back to Admin'].includes(text)) {
       adminBroadcastState.delete(userId);
       adminWaitingAddChat.delete(userId);
@@ -1471,11 +1499,11 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text:
-            '⏸️ <b>Force-Sub Disabled (Paused)</b>\n\n' +
-            'Channels remain saved in your list, but users can now download directly without verification.\n\n' +
-            'To re-enable anytime, send:\n<code>/channel on</code>',
+            '⏸️ <b>Join Verification Paused</b>\n\n' +
+            'Channels remain saved in your list. Users can now download directly without verification.\n\n' +
+            'To resume anytime, tap Resume Join or send:\n<code>/channel on</code>',
           parse_mode: 'HTML',
-          reply_markup: getAdminPanelKeyboard(channels)
+          reply_markup: getAdminPanelKeyboard(channels, false)
         });
       }
       if (cmdToken === '/channel_on' || newChan?.toLowerCase() === 'on') {
@@ -1484,10 +1512,10 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
         return tgCall(token, 'sendMessage', {
           chat_id: chatId,
           text:
-            '▶️ <b>Force-Sub Re-enabled!</b>\n\n' +
+            '▶️ <b>Join Verification Active</b>\n\n' +
             'Join verification is now active for all connected channels.',
           parse_mode: 'HTML',
-          reply_markup: getAdminPanelKeyboard(channels)
+          reply_markup: getAdminPanelKeyboard(channels, true)
         });
       }
       if (!newChan) {
@@ -1498,8 +1526,8 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           text:
             `💡 <b>Usage:</b> <code>/channel @username [Button Label]</code>\n\n` +
             `Example:\n<code>/channel @RHToolsOfficial Join RH Tools</code>\n\n` +
-            `To pause force-sub:\n<code>/channel off</code>\n\n` +
-            `To resume force-sub:\n<code>/channel on</code>\n\n` +
+            `To pause verification:\n<code>/channel off</code>\n\n` +
+            `To resume verification:\n<code>/channel on</code>\n\n` +
             `<b>Connected Chats (${channels.length}/3):</b>\n${chList}`,
           parse_mode: 'HTML',
           reply_markup: getAdminPanelKeyboard(channels)
