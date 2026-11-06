@@ -1560,7 +1560,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
       groupTikTokUrls = allGroupTikTokUrls.slice(0, 5);
       await tgCall(token, 'sendMessage', {
         chat_id: chatId,
-        text: '⚠️ <b>Maximum 5 links supported at once!</b>\n<blockquote>Processing the first 5 links. Please send the remaining links in a separate message.</blockquote>',
+        text: '⚠️ <b>Max 5 links at once.</b> Processing first 5.',
         parse_mode: 'HTML',
         reply_to_message_id: msg.message_id
       }).catch(() => {});
@@ -1807,7 +1807,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
     tiktokUrls = allTiktokUrls.slice(0, 5);
     await tgCall(token, 'sendMessage', {
       chat_id: chatId,
-      text: '⚠️ <b>Maximum 5 links supported at once!</b>\n<blockquote>Processing the first 5 links. Please send the remaining links in a separate message.</blockquote>',
+      text: '⚠️ <b>Max 5 links at once.</b> Processing first 5.',
       parse_mode: 'HTML',
       reply_to_message_id: msg.message_id
     }).catch(() => {});
