@@ -187,6 +187,7 @@ async function checkChannelMember(token, channel, userId) {
 
 const channelErrorCache = new Map(); // target -> timestamp (TTL 5 mins)
 const channelAlertCache = new Map(); // target -> timestamp (TTL 10 mins)
+let lastDownloadAlertTime = 0;
 
 export function getShortChannelReason(reasonStr) {
   const low = String(reasonStr || '').toLowerCase();
@@ -793,8 +794,24 @@ export default {
 
       try {
         const update = await request.json();
-        const task = handleUpdate(update, botToken, env, ctx).catch((err) => {
+        const task = handleUpdate(update, botToken, env, ctx).catch(async (err) => {
           console.error('Unhandled update error:', err);
+          const adminId = env.ADMIN_ID || '6775546602';
+          await db.logServerError({
+            userId: 0,
+            username: 'System',
+            url: '',
+            errorType: 'UnhandledUpdateError',
+            errorMessage: err.message || 'Unknown update error',
+            platform: 'Telegram Webhook'
+          }, env).catch(() => {});
+          if (adminId) {
+            await tgCall(botToken, 'sendMessage', {
+              chat_id: adminId,
+              text: `🚨 <b>Critical Webhook Error:</b>\n<blockquote>${escapeHtml(err.message || 'Unknown update error')}</blockquote>`,
+              parse_mode: 'HTML'
+            }).catch(() => {});
+          }
         });
         if (ctx && typeof ctx.waitUntil === 'function') {
           ctx.waitUntil(task);
@@ -2441,6 +2458,22 @@ async function processTikTokDownload(tiktokUrl, chatId, fromUser, token, env, ct
       errorMessage: rawErr,
       platform: 'TikTok'
     }, env), ctx);
+
+    // Real-time alert to Admin (throttled to 1 warning per 60s)
+    const adminId = env.ADMIN_ID || '6775546602';
+    const nowAlert = Date.now();
+    if (adminId && (nowAlert - lastDownloadAlertTime >= 60000)) {
+      lastDownloadAlertTime = nowAlert;
+      bgTask(tgCall(token, 'sendMessage', {
+        chat_id: adminId,
+        text: `⚠️ <b>Download Incident Alert</b>\n` +
+              `<blockquote>Platform: <b>TikTok</b>\n` +
+              `User: <code>${fromUser?.id || chatId}</code>\n` +
+              `Error: <code>${escapeHtml(rawErr || errType || 'Extraction failed')}</code>\n` +
+              `URL: ${escapeHtml(tiktokUrl)}</blockquote>`,
+        parse_mode: 'HTML'
+      }), ctx);
+    }
 
   } finally {
     if (releaseInFlight) {
