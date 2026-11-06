@@ -422,17 +422,38 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   try {
     chatCheck = await tgCall(token, 'getChat', { chat_id: cleanTarget });
   } catch (err) {
+    const rawMsg = err.message || 'Chat not found';
+    const lower = rawMsg.toLowerCase();
+    let reason = 'Chat not found.';
+    if (lower.includes('not an administrator') || lower.includes('chat_admin_required') || lower.includes('not enough rights')) {
+      reason = 'Bot is not an administrator.';
+    } else if (lower.includes('chat not found') || lower.includes('peer_id_invalid') || lower.includes('invalid chat')) {
+      reason = 'Chat not found.';
+    } else {
+      reason = rawMsg.replace(/^bad request:\s*/i, '');
+      if (!reason.endsWith('.')) reason += '.';
+    }
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat:</b> <code>${escapeHtml(err.message || 'Chat not found')}</code>\nMake sure the bot is an <b>Administrator</b> in that channel.`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)}\nMake sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
   if (!chatCheck?.ok || !chatCheck.result) {
-    const errMsg = chatCheck?.description || 'Chat not found';
+    const rawMsg = chatCheck?.description || 'Chat not found';
+    const lower = rawMsg.toLowerCase();
+    let reason = 'Chat not found.';
+    if (lower.includes('not an administrator') || lower.includes('chat_admin_required') || lower.includes('not enough rights')) {
+      reason = 'Bot is not an administrator.';
+    } else if (lower.includes('chat not found') || lower.includes('peer_id_invalid') || lower.includes('invalid chat')) {
+      reason = 'Chat not found.';
+    } else {
+      reason = rawMsg.replace(/^bad request:\s*/i, '');
+      if (!reason.endsWith('.')) reason += '.';
+    }
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect chat:</b> <code>${escapeHtml(errMsg)}</code>\nMake sure the bot is an <b>Administrator</b> in that channel.`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(reason)}\nMake sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -442,16 +463,15 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
   if (chatObj && chatObj.type === 'private') {
     return {
       ok: false,
-      text: '⚠️ <b>Invalid Chat Type:</b> Only Telegram Channels and Groups can be connected. Bots or personal profiles cannot be added.'
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Only channels and groups can be connected.\nMake sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
   const { ok: rightsOk, reason: rightsReason } = await checkBotChatRights(token, chatObj.id || cleanTarget);
   if (!rightsOk) {
-    const botUser = (botTag || 'TheTikTokDownloaderBot').replace(/^@/, '');
     return {
       ok: false,
-      text: `⚠️ <b>Failed to connect:</b> Bot is not an Administrator in <b>${escapeHtml(dispName)}</b>!\n\nPlease add <b>@${escapeHtml(botUser)}</b> as an <b>Administrator</b> in that channel first.`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>Bot is not an administrator.\nMake sure the bot is an admin in your channel.</blockquote>`
     };
   }
 
@@ -463,17 +483,16 @@ export async function connectChatCore(token, env, targetRef, fallbackTitle = '',
     (c) => c.target === target || c.chat_key === altTarget || c.target === altTarget || (c.chat_key && c.chat_key === target)
   );
   if (isAlready) {
-    const chList = formatConnectedChatsList(channels);
     return {
       ok: false,
-      text: `⚠️ <b>${escapeHtml(dispName)}</b> is already connected.\n\n<b>Connected Chats (${channels.length}/3):</b>\n${chList}`
+      text: `⚠️ <b>Failed to connect chat</b>\n<blockquote>${escapeHtml(dispName)} is already connected.</blockquote>`
     };
   }
 
   if (channels.length >= 3) {
     return {
       ok: false,
-      text: '⚠️ Limit reached (<b>3/3</b>).'
+      text: '⚠️ <b>Failed to connect chat</b>\n<blockquote>Limit reached (3/3).</blockquote>'
     };
   }
 
@@ -746,7 +765,7 @@ export function getMainAdminKeyboard() {
   };
 }
 
-export function getAdminPanelKeyboard(channels = [], isForceSubActive = true) {
+export function getAdminPanelKeyboard(channels = []) {
   const chRights = {
     is_anonymous: false,
     can_manage_chat: true,
@@ -811,10 +830,9 @@ export function getAdminPanelKeyboard(channels = [], isForceSubActive = true) {
 
   const rows = [addRow];
   if (channels.length > 0) {
-    const pauseBtn = isForceSubActive ? { text: '⏸️ Pause Join' } : { text: '▶️ Resume Join' };
-    rows.push([pauseBtn, { text: '🗑️ Disconnect' }]);
-    rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache' }]);
-    rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
+    rows.push([{ text: '🗑️ Disconnect' }, { text: '📣 Broadcast' }]);
+    rows.push([{ text: '🗑️ Clear Cache' }, { text: '📊 Activity' }]);
+    rows.push([{ text: 'Back' }]);
   } else {
     rows.push([{ text: '📣 Broadcast' }, { text: '🗑️ Clear Cache' }]);
     rows.push([{ text: '📊 Activity' }, { text: 'Back' }]);
@@ -869,7 +887,7 @@ async function showAdminDashboard(chatId, token, env) {
   const stats = await db.getStats(env);
   const channels = await db.getConnectedChats(env);
   const forceSubStatus = await db.getSetting('force_sub_status', env, 'on');
-  const statusTag = forceSubStatus === 'off' ? '⏸️ Paused (Off)' : 'Active';
+  const statusTag = forceSubStatus === 'off' ? 'Paused' : 'Active';
   const chList = formatConnectedChatsList(channels);
   const totalUsers = stats.users || 0;
   const activeUsers = stats.activeUsers || totalUsers;
@@ -896,7 +914,7 @@ async function showAdminDashboard(chatId, token, env) {
     chat_id: chatId,
     text: dashboardText,
     parse_mode: 'HTML',
-    reply_markup: getAdminPanelKeyboard(channels, forceSubStatus !== 'off')
+    reply_markup: getAdminPanelKeyboard(channels)
   });
 }
 
@@ -1147,33 +1165,6 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
 
   // Admin Navigation Handlers
   if (isAdminUser) {
-    if (['⏸️ Pause Join', 'Pause Join'].includes(text)) {
-      await db.setSetting('force_sub_status', 'off', env);
-      const channels = await db.getConnectedChats(env);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text:
-          '⏸️ <b>Join Verification Paused</b>\n\n' +
-          'Channels remain saved in your list. Users can now download directly without verification.\n\n' +
-          'To resume anytime, tap Resume Join or send:\n<code>/channel on</code>',
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels, false)
-      });
-    }
-
-    if (['▶️ Resume Join', 'Resume Join'].includes(text)) {
-      await db.setSetting('force_sub_status', 'on', env);
-      const channels = await db.getConnectedChats(env);
-      return tgCall(token, 'sendMessage', {
-        chat_id: chatId,
-        text:
-          '▶️ <b>Join Verification Active</b>\n\n' +
-          'Join verification is now active for all connected channels.',
-        parse_mode: 'HTML',
-        reply_markup: getAdminPanelKeyboard(channels, true)
-      });
-    }
-
     if (['Admin', '⚙️ Admin', 'Admin Panel', '⚙️ Admin Panel', '⚙️ Admin Dashboard', '/admin', 'Refresh', '🔄 Refresh', '⬅️ Back to Admin'].includes(text)) {
       adminBroadcastState.delete(userId);
       adminWaitingAddChat.delete(userId);
@@ -1500,10 +1491,9 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
           chat_id: chatId,
           text:
             '⏸️ <b>Join Verification Paused</b>\n\n' +
-            'Channels remain saved in your list. Users can now download directly without verification.\n\n' +
-            'To resume anytime, tap Resume Join or send:\n<code>/channel on</code>',
+            'Channels remain saved in your list. Users can now download directly without verification.',
           parse_mode: 'HTML',
-          reply_markup: getAdminPanelKeyboard(channels, false)
+          reply_markup: getAdminPanelKeyboard(channels)
         });
       }
       if (cmdToken === '/channel_on' || newChan?.toLowerCase() === 'on') {
@@ -1515,7 +1505,7 @@ async function handleUpdate(update, token, env = {}, ctx = null) {
             '▶️ <b>Join Verification Active</b>\n\n' +
             'Join verification is now active for all connected channels.',
           parse_mode: 'HTML',
-          reply_markup: getAdminPanelKeyboard(channels, true)
+          reply_markup: getAdminPanelKeyboard(channels)
         });
       }
       if (!newChan) {
