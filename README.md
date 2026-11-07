@@ -1,4 +1,4 @@
-# ⚡ TheTikTokDownloaderBot
+# TheTikTokDownloaderBot
 
 > **Ultra-fast, 100% serverless Telegram Bot to download TikTok videos without watermark in HD & extract MP3 audio   powered by Cloudflare Workers & Cloudflare D1.**
 
@@ -9,21 +9,21 @@
 
 ---
 
-## 🌟 Key Features
+## Key Features
 
-- **⚡ 100% Serverless:** 0ms cold starts, infinite free-tier scalability on Cloudflare Workers edge network.
-- **🚀 Zero Server Bandwidth & RAM Load:** Videos stream directly from high-speed TikTok CDNs to Telegram via Telegram Bot API URL streaming.
-- **⚡ Instant Telegram Cache:** Once any video is downloaded, its Telegram `file_id` is cached. Repeated requests are delivered instantly in 0.2s with zero CDN calls.
-- **📊 User Tracking & Analytics:** Persistent storage for user engagement and download counts via Cloudflare D1 (or local SQLite).
-- **🔒 Admin Analytics:** Secret `/stats` command restricted strictly to the configured `ADMIN_ID`.
-- **✨ Pure No-Watermark HD:** Downloads crystal-clear MP4 videos without TikTok logos or end screens.
-- **🎵 Instant MP3 Audio Extraction:** Interactive `🎵 Download Audio` button under every video.
-- **🔗 Universal Link Compatibility:** Supports desktop URLs, mobile app share links (`vt.tiktok.com`, `vm.tiktok.com`), and query-tagged links.
-- **🛡️ 100% Native Telegram Experience:** Zero external ads, zero pop-ups, zero third-party redirects.
+- **100% Serverless:** 0ms cold starts, infinite free-tier scalability on Cloudflare Workers edge network.
+- **Zero Server Bandwidth & RAM Load:** Videos stream directly from high-speed TikTok CDNs to Telegram via Telegram Bot API URL streaming.
+- **Instant Telegram Cache:** Once any video is downloaded, its Telegram `file_id` is cached. Repeated requests are delivered instantly in 0.2s with zero CDN calls.
+- **User Tracking & Analytics:** Persistent storage for user engagement and download counts via Cloudflare D1 (or local SQLite).
+- **Admin Analytics:** Secret `/stats` command restricted strictly to the configured `ADMIN_ID`.
+- **Pure No-Watermark HD:** Downloads crystal-clear MP4 videos without TikTok logos or end screens.
+- **Instant MP3 Audio Extraction:** Interactive `Download Audio` button under every video.
+- **Universal Link Compatibility:** Supports desktop URLs, mobile app share links (`vt.tiktok.com`, `vm.tiktok.com`), and query-tagged links.
+- **100% Native Telegram Experience:** Zero external ads, zero pop-ups, zero third-party redirects.
 
 ---
 
-## 🚀 Quick Setup & Deployment
+## Quick Setup & Deployment
 
 ### 1. Clone & Install Dependencies
 ```bash
@@ -65,7 +65,7 @@ Your bot is now live and will respond to TikTok links in real time!
 
 ---
 
-## 🧪 Local Testing & Verification
+## Local Testing & Verification
 
 Run the built-in test suite to verify extraction engines, database tracking, and Telegram webhook compatibility:
 ```bash
@@ -74,5 +74,5 @@ npm test
 
 ---
 
-## 📄 License
+## License
 This project is open-source under the [MIT License](LICENSE).
